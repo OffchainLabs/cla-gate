@@ -37,9 +37,10 @@ only such commits, apart from history that was already in a branch when it was f
 The app key is stored in the security team's AWS account. The gate assumes an AWS role with
 GitHub's OIDC token. The role trusts only this workflow, at the commits the security team lists
 (the pinned one and the one before), so other workflows in gated repositories can't read the key.
-The role's ARN is an Actions secret, the gate masks the AWS account ID and every line of the key,
-and it doesn't print AWS's error messages, so none of these appear in the public logs of gated
-repositories. The app has no permissions beyond **Members: read**.
+The role's ARN is an Actions secret, the gate masks the AWS account ID and role name before
+contacting AWS and every line of the key once read, and it doesn't print AWS's error messages from
+reading the key, so none of these appear in the public logs of gated repositories. The app has no
+permissions beyond **Members: read**.
 
 ## Setup
 

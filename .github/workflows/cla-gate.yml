@@ -32,6 +32,17 @@ jobs:
       # The app key lives in AWS Secrets Manager. The role trusts only this workflow at its pinned
       # commit, so other workflows in gated repositories can't read it. The role ARN is a secret
       # so it's masked in the public logs of gated repositories.
+      # The role ARN is masked as a whole, but AWS errors can name the account or role inside other
+      # ARNs, and the AWS action only masks the account ID once it has assumed the role.
+      - name: Mask AWS identifiers
+        env:
+          ROLE_ARN: ${{ secrets.CLA_GATE_AWS_ROLE_ARN }}
+        run: |
+          if [[ "$ROLE_ARN" =~ ^arn:aws:iam::([0-9]{12}):role/(.+)$ ]]; then
+            echo "::add-mask::${BASH_REMATCH[1]}"
+            echo "::add-mask::${BASH_REMATCH[2]##*/}"
+          fi
+
       - name: Assume the CLA gate AWS role
         id: aws
         continue-on-error: true

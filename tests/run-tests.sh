@@ -19,6 +19,7 @@ step_script() {
 
 step_script "Pass license/cla if every author is an org member" "$work/gate.sh"
 step_script "Read the app key" "$work/key.sh"
+step_script "Mask AWS identifiers" "$work/mask.sh"
 
 export PATH="$repo/tests/bin:$PATH"
 export GH_LOG="$work/gh.log" CURL_LOG="$work/curl.log"
@@ -114,6 +115,25 @@ run_key_step() {
 
 run_key_step "masks every line and passes the key on" 0
 run_key_step "AWS error writes nothing" 1 FAIL_AWS=1
+
+# Usage: run_mask_step NAME ROLE_ARN WANT. WANT is the expected output, one mask per line.
+run_mask_step() {
+  local name=$1 arn=$2 want=$3 output rc=0
+  output=$(env ROLE_ARN="$arn" bash "$work/mask.sh" 2>&1) || rc=$?
+  if [[ "$rc" == 0 && "$output" == "$want" ]]; then
+    echo "ok   mask step: $name"
+    return
+  fi
+  echo "FAIL mask step: $name: rc=$rc output='$output'"
+  failures=$((failures + 1))
+}
+
+run_mask_step "masks the account ID and role name" "arn:aws:iam::123456789012:role/gate-role" \
+  $'::add-mask::123456789012\n::add-mask::gate-role'
+run_mask_step "masks a role name under a path" "arn:aws:iam::123456789012:role/ci/gate-role" \
+  $'::add-mask::123456789012\n::add-mask::gate-role'
+run_mask_step "no role ARN prints nothing" "" ""
+run_mask_step "malformed role ARN prints nothing" "not-an-arn" ""
 
 if ((failures > 0)); then
   echo "$failures failed."
