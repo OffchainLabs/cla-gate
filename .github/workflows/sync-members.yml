@@ -33,16 +33,31 @@ jobs:
       - name: Write CLA_MEMBERS
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          CLA_MEMBERS_KEY: ${{ secrets.CLA_MEMBERS_KEY }}
         run: |
           set -euo pipefail
 
-          # Commas at both ends let the gate match ",login," exactly.
+          if [[ -z "$CLA_MEMBERS_KEY" ]]; then
+            echo "::error::CLA_MEMBERS_KEY is unset; see the setup steps in README.md."
+            exit 1
+          fi
+
+          # The variable is readable by workflows in fork pull requests, which don't get
+          # secrets, so it holds keyed hashes rather than logins. Must match hash_login in
+          # cla-gate.yml.
+          hash_login() {
+            printf '%s' "${1,,}" | openssl dgst -sha256 -hmac "$CLA_MEMBERS_KEY" -r | cut -d' ' -f1
+          }
+
           members=$(gh api --paginate orgs/OffchainLabs/members --jq '.[].login' | sort -u)
           if [[ -z "$members" ]]; then
             echo "::error::The member list came back empty; leaving CLA_MEMBERS unchanged."
             exit 1
           fi
-          value=",$(paste -sd, - <<< "$members"),"
+          hashes=$(while read -r login; do hash_login "$login"; done <<< "$members")
+          # The timestamp lets the gate reject a list the sync stopped updating. Commas at both
+          # ends of the list let the gate match ",hash," exactly.
+          value="$(date -u +%Y-%m-%dT%H:%M:%SZ)|,$(paste -sd, - <<< "$hashes"),"
 
           if gh api orgs/OffchainLabs/actions/variables/CLA_MEMBERS --silent 2>/dev/null; then
             gh api -X PATCH orgs/OffchainLabs/actions/variables/CLA_MEMBERS --silent \

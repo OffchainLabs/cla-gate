@@ -5,6 +5,8 @@ name: CLA gate
 # blocked when CLA assistant stalls. Every other pull request is left for CLA assistant to decide.
 on:
   pull_request:
+    # `edited` covers a changed base branch, which changes the commits in the pull request.
+    types: [opened, synchronize, reopened, edited]
 
 permissions: {}
 
@@ -29,8 +31,10 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          # Written hourly by sync-members.yml, as ",login1,login2,...,".
-          MEMBERS: ${{ vars.CLA_MEMBERS }}
+          # Written hourly by sync-members.yml, as "<UTC timestamp>|,hash1,hash2,...,", where
+          # each hash is an HMAC of a lowercased member login keyed with CLA_MEMBERS_KEY.
+          CLA_MEMBERS: ${{ vars.CLA_MEMBERS }}
+          CLA_MEMBERS_KEY: ${{ secrets.CLA_MEMBERS_KEY }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
@@ -39,43 +43,87 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ -z "$MEMBERS" ]]; then
-            echo "::error::CLA_MEMBERS is empty or unset. Check the Sync members workflow in" \
-              "OffchainLabs/cla-gate."
-            exit 1
-          fi
+          pass_description="All authors are OffchainLabs members (CLA gate)"
 
-          is_member() {
-            case "$1" in
-              dependabot\[bot\] | github-actions\[bot\]) return 0 ;;
-            esac
-            [[ "$MEMBERS" == *",$1,"* ]]
+          # Leaves license/cla to CLA assistant. A success this gate posted on HEAD_SHA earlier,
+          # for instance before the base branch changed, no longer holds, so it is withdrawn.
+          decline() {
+            echo "$1; leaving license/cla to CLA assistant."
+            latest=$(gh api "repos/$REPO/commits/$HEAD_SHA/status" --jq \
+              '.statuses[] | select(.context == "license/cla") | "\(.state) \(.description)"')
+            if [[ "$latest" == "success $pass_description" ]]; then
+              gh api "repos/$REPO/statuses/$HEAD_SHA" --silent \
+                -f state=pending \
+                -f context=license/cla \
+                -f description="Not all authors are members (CLA gate). Details to recheck." \
+                -f target_url="https://cla-assistant.io/check/$REPO?pullRequest=$PR_NUMBER"
+              echo "Withdrew the gate's earlier success on $HEAD_SHA."
+            fi
+            exit 0
           }
 
-          if ! is_member "$PR_AUTHOR"; then
-            echo "$PR_AUTHOR is not an org member; leaving license/cla to CLA assistant."
-            exit 0
-          fi
+          # Must match hash_login in sync-members.yml.
+          hash_login() {
+            printf '%s' "${1,,}" | openssl dgst -sha256 -hmac "$CLA_MEMBERS_KEY" -r | cut -d' ' -f1
+          }
 
           commit_count=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .commits)
           if (( commit_count > 250 )); then
-            echo "$commit_count commits exceeds the API listing limit; leaving to CLA assistant."
-            exit 0
+            decline "$commit_count commits exceeds the API listing limit"
           fi
 
           # A commit whose author email isn't linked to a GitHub account has a null login.
-          authors=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/commits" \
-            --jq '.[] | .author.login // "<unlinked>"' | sort -u)
-          while read -r author; do
-            if [[ "$author" == "<unlinked>" ]] || ! is_member "$author"; then
-              echo "Commit author $author is not an org member; leaving to CLA assistant."
-              exit 0
+          authors=$({
+            echo "$PR_AUTHOR"
+            gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/commits" \
+              --jq '.[] | .author.login // "<unlinked>"'
+          } | sort -u)
+
+          # Bots pass without the member list, so Dependabot runs, which get no Actions secrets,
+          # don't need CLA_MEMBERS_KEY.
+          humans=$(grep -vxE 'dependabot\[bot\]|github-actions\[bot\]' <<< "$authors" || true)
+          if [[ -n "$humans" ]]; then
+            if [[ -z "$CLA_MEMBERS" || -z "$CLA_MEMBERS_KEY" ]]; then
+              echo "::error::CLA_MEMBERS or CLA_MEMBERS_KEY is empty or unset. See the setup" \
+                "steps in OffchainLabs/cla-gate."
+              exit 1
             fi
-          done <<< "$authors"
+
+            # A stale list could still contain people who have left the organization.
+            synced_at=${CLA_MEMBERS%%|*}
+            members=${CLA_MEMBERS#*|}
+            if ! synced_epoch=$(date -u -d "$synced_at" +%s 2>/dev/null); then
+              echo "::error::CLA_MEMBERS has no valid sync timestamp. Run the Sync members" \
+                "workflow in OffchainLabs/cla-gate."
+              exit 1
+            fi
+            if (( $(date -u +%s) - synced_epoch > 24 * 3600 )); then
+              echo "::error::CLA_MEMBERS was last synced at $synced_at. Re-enable or fix the" \
+                "Sync members workflow in OffchainLabs/cla-gate."
+              exit 1
+            fi
+
+            while read -r login; do
+              if [[ "$login" == "<unlinked>" ]]; then
+                decline "A commit author's email isn't linked to a GitHub account"
+              fi
+              if [[ "$members" != *",$(hash_login "$login"),"* ]]; then
+                decline "$login is not an org member"
+              fi
+            done <<< "$humans"
+          fi
+
+          # The commits listed are those of the pull request's head when fetched, which may be
+          # newer than HEAD_SHA. Only mark HEAD_SHA if it is still the head.
+          head_now=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
+          if [[ "$head_now" != "$HEAD_SHA" ]]; then
+            echo "Head moved to $head_now while checking; leaving to the run for the new head."
+            exit 0
+          fi
 
           gh api "repos/$REPO/statuses/$HEAD_SHA" --silent \
             -f state=success \
             -f context=license/cla \
-            -f description="All authors are OffchainLabs members (CLA gate)" \
+            -f description="$pass_description" \
             -f target_url="$RUN_URL"
           echo "Marked license/cla as passing for $HEAD_SHA."
