@@ -96,15 +96,15 @@ Start in **Evaluate** mode, open a pull request in a gated repository, then swit
 
 ## Tested behaviour
 
-Verified with an OffchainLabs organization ruleset on `OffchainLabs/cla-gate-test`, with the
-earlier design that looked up membership live:
+Verified with an OffchainLabs organization ruleset on `OffchainLabs/cla-gate-test`:
 
 - The ruleset runs this workflow in the target repository, in both Evaluate and Active mode.
-- The run receives organization variables.
+- Sync members writes all organization members to `CLA_MEMBERS`, and the gate reads it.
 - A branch pull request by a member gets `license/cla: success` from the gate.
 - A fork pull request skips the job, posts nothing, and the skipped run satisfies the required
   workflow, so the pull request waits only on CLA assistant.
-- With setup incomplete, the run reports the error, posts nothing, and still passes.
+- With setup incomplete, the run reports the error, posts nothing, and still passes. This was
+  tested with the earlier design that looked up membership live.
 
 Not yet tested: an enterprise ruleset running this workflow in organizations other than
 OffchainLabs.
