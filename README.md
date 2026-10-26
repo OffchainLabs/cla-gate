@@ -106,22 +106,27 @@ later; on macOS, `brew install yq bash`.
 
 ## Tested behaviour
 
-Verified with an OffchainLabs organization ruleset on `OffchainLabs/cla-gate-test`, with an earlier
-version of this live-lookup gate:
+Verified with the OffchainLabs organization ruleset on `OffchainLabs/cla-gate-test`, with this
+version:
+
+- A branch pull request by a member with concealed membership gets `license/cla: success`, using
+  the key secret scoped to the gated repositories.
+- A Dependabot pull request gets `license/cla: success`. The token step fails because the run has
+  no Actions secrets, and the gate passes `dependabot[bot]` without a lookup.
+
+With earlier versions of the gate:
 
 - The ruleset runs this workflow in the target repository, in both Evaluate and Active mode.
-- The run receives the organization's `CLA_GATE_PRIVATE_KEY` and `CLA_GATE_CLIENT_ID`.
-- A branch pull request by a member gets `license/cla: success` from the gate.
 - A fork pull request skips the job, posts nothing, and the skipped run satisfies the required
   workflow, so the pull request waits only on CLA assistant.
 - With the app not installed, the run reports the error, posts nothing, and still passes.
 - The ruleset doesn't run the workflow on pull requests into branches it doesn't target.
-- A member with concealed membership passes the lookup.
-- On `arbitrum-docs` before gating, CLA assistant only ever posted `license/cla: success` on
-  member pull requests, from minutes to over a day after they opened, and sometimes never.
 
-Not yet tested: this version's Dependabot handling, and an enterprise ruleset running this
-workflow in organizations other than OffchainLabs.
+On `arbitrum-docs` before gating, CLA assistant only ever posted `license/cla: success` on member
+pull requests, from minutes to over a day after they opened, and sometimes never.
+
+Not yet tested: an enterprise ruleset running this workflow in organizations other than
+OffchainLabs.
 
 ## Known limitations
 
