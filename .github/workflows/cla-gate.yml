@@ -50,10 +50,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Exits the run on any answer other than member (204) or not a member (404).
+          # Exits the run on any answer other than member (204) or not a member (404). --globoff
+          # stops curl reading the brackets in logins like renovate[bot] as a URL pattern.
           is_member() {
             local code
-            code=$(curl -sS -o /dev/null -w '%{http_code}' \
+            code=$(curl -sS --globoff -o /dev/null -w '%{http_code}' \
               -H "Authorization: Bearer $MEMBERS_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               "https://api.github.com/orgs/OffchainLabs/members/$1")
@@ -84,8 +85,8 @@ jobs:
           humans=$(grep -vxE 'dependabot\[bot\]|github-actions\[bot\]' <<< "$authors" || true)
           if [[ -n "$humans" ]]; then
             if [[ -z "$MEMBERS_TOKEN" ]]; then
-              echo "::error::No membership token. Check CLA_GATE_CLIENT_ID and" \
-                "CLA_GATE_PRIVATE_KEY against the setup steps in OffchainLabs/cla-gate."
+              echo "::error::No membership token; see the token step's error above. If the" \
+                "secret or variable is missing, follow the setup steps in OffchainLabs/cla-gate."
               exit 1
             fi
             while read -r login; do

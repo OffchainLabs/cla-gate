@@ -13,6 +13,12 @@ fi
 login=${url#"$prefix"}
 echo "$login" >>"$CURL_LOG"
 
+# Like real curl, read brackets as a URL pattern unless told not to.
+if [[ "$url" == *"["* && " $* " != *" --globoff "* && " $* " != *" -g "* ]]; then
+  echo "curl: (3) bad range in URL" >&2
+  exit 3
+fi
+
 if [[ -n "${MEMBERS_HTTP:-}" ]]; then
   echo "$MEMBERS_HTTP"
   [[ "$MEMBERS_HTTP" != 000 ]]

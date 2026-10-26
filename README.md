@@ -35,8 +35,8 @@ only such commits, apart from history that was already in a branch when it was f
 
 The app key is an organization secret that the gated repositories can read. Anyone who can run a
 workflow in one of them from a branch, which takes write access, can copy the key and use it to
-list OffchainLabs members, including concealed memberships, and teams. The key can do nothing else.
-Rotate it if it may have been copied.
+read OffchainLabs membership data, such as members (including concealed memberships) and teams.
+The app has no other permissions. Rotate the key if it may have been copied.
 
 ## Setup
 
@@ -101,7 +101,8 @@ Start in **Evaluate** mode, open a pull request in a gated repository, then swit
 
 `tests/run-tests.sh` pulls the gate's script out of `cla-gate.yml` and runs it against stub `gh`
 and `curl` commands, checking each case's exit code, the statuses it posts, the logins it looks
-up, and its output. CI runs it on every pull request. Running it locally needs `yq`.
+up, and its output. CI runs it on every pull request. Running it locally needs `yq` and bash 4 or
+later; on macOS, `brew install yq bash`.
 
 ## Tested behaviour
 
@@ -115,6 +116,9 @@ version of this live-lookup gate:
   workflow, so the pull request waits only on CLA assistant.
 - With the app not installed, the run reports the error, posts nothing, and still passes.
 - The ruleset doesn't run the workflow on pull requests into branches it doesn't target.
+- A member with concealed membership passes the lookup.
+- On `arbitrum-docs` before gating, CLA assistant only ever posted `license/cla: success` on
+  member pull requests, from minutes to over a day after they opened, and sometimes never.
 
 Not yet tested: this version's Dependabot handling, and an enterprise ruleset running this
 workflow in organizations other than OffchainLabs.
@@ -131,5 +135,8 @@ workflow in organizations other than OffchainLabs.
   A commit that passed in a pull request into `develop` also passes when opened against `main`,
   even though that pull request also brings in those older commits. Opening `develop` itself
   against `main` checks them.
+- The newest `license/cla` status wins. If CLA assistant posts a failure or pending after the
+  gate's success, for example for a member it considers unsigned, the pull request is blocked
+  until CLA assistant passes it.
 - A member can pass someone else's code by committing it under their own name. CLA assistant has
   the same limitation.

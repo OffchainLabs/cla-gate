@@ -57,6 +57,8 @@ run_gate "outside pull request author with member commits" 0 "" "alice eve" \
   "eve is not an org member" PR_AUTHOR=eve COMMIT_AUTHORS=alice
 run_gate "outside commit author" 0 "" "alice eve" "eve is not an org member" \
   COMMIT_AUTHORS="alice eve"
+run_gate "other bots are looked up and declined" 0 "" "alice renovate[bot]" \
+  "renovate[bot] is not an org member" COMMIT_AUTHORS="alice renovate[bot]"
 run_gate "unlinked commit email" 0 "" "" "isn't linked" COMMIT_AUTHORS="alice <unlinked>"
 run_gate "too many commits" 0 "" "" "exceeds the API listing limit" COMMIT_COUNT=251
 run_gate "head moved" 0 "" "alice" "Head moved to def" HEAD_NOW=def
