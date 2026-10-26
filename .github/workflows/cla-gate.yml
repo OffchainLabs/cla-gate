@@ -1,8 +1,9 @@
 name: CLA gate
 
-# Run in other repositories by an organization ruleset (see README.md). Marks `license/cla` as
-# passing for pull requests written entirely by OffchainLabs members, so internal work isn't
-# blocked when CLA assistant stalls. Every other pull request is left for CLA assistant to decide.
+# Run in other repositories by an organization ruleset (see README.md), which runs it only on pull
+# requests into the branches it targets. Marks `license/cla` as passing for pull requests written
+# entirely by OffchainLabs members, so internal work isn't blocked when CLA assistant stalls.
+# Every other pull request is left for CLA assistant to decide.
 on:
   pull_request:
 
@@ -23,14 +24,24 @@ jobs:
       pull-requests: read
       statuses: write
     steps:
-      # A broken gate must never block merges, so failures are reported on the run without
-      # failing the job. CLA assistant still decides the pull request.
+      # A broken gate must not decide a pull request, so failures are reported on the run without
+      # failing the job, and CLA assistant decides. Dependabot runs get no Actions secrets, so
+      # this step fails for them; the next step passes bots without a token.
+      - name: Create org membership token
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
+        with:
+          client-id: ${{ vars.CLA_GATE_CLIENT_ID }}
+          private-key: ${{ secrets.CLA_GATE_PRIVATE_KEY }}
+          owner: OffchainLabs
+          permission-members: read
+
       - name: Pass license/cla if every author is an org member
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          # Written hourly by sync-members.yml, as ",login1,login2,...,".
-          MEMBERS: ${{ vars.CLA_MEMBERS }}
+          MEMBERS_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
@@ -39,23 +50,23 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ -z "$MEMBERS" ]]; then
-            echo "::error::CLA_MEMBERS is empty or unset. Check the Sync members workflow in" \
-              "OffchainLabs/cla-gate."
-            exit 1
-          fi
-
+          # Exits the run on any answer other than member (204) or not a member (404).
           is_member() {
-            case "$1" in
-              dependabot\[bot\] | github-actions\[bot\]) return 0 ;;
+            local code
+            code=$(curl -sS -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $MEMBERS_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/orgs/OffchainLabs/members/$1")
+            case "$code" in
+              204) return 0 ;;
+              404) return 1 ;;
+              *)
+                echo "::error::Membership check for $1 returned HTTP $code; expected 204 or 404." \
+                  "Check that the CLA gate app has Members: read on OffchainLabs."
+                exit 1
+                ;;
             esac
-            [[ "$MEMBERS" == *",$1,"* ]]
           }
-
-          if ! is_member "$PR_AUTHOR"; then
-            echo "$PR_AUTHOR is not an org member; leaving license/cla to CLA assistant."
-            exit 0
-          fi
 
           commit_count=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .commits)
           if (( commit_count > 250 )); then
@@ -64,14 +75,39 @@ jobs:
           fi
 
           # A commit whose author email isn't linked to a GitHub account has a null login.
-          authors=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/commits" \
-            --jq '.[] | .author.login // "<unlinked>"' | sort -u)
-          while read -r author; do
-            if [[ "$author" == "<unlinked>" ]] || ! is_member "$author"; then
-              echo "Commit author $author is not an org member; leaving to CLA assistant."
-              exit 0
+          authors=$({
+            echo "$PR_AUTHOR"
+            gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/commits" \
+              --jq '.[] | .author.login // "<unlinked>"'
+          } | sort -u)
+
+          humans=$(grep -vxE 'dependabot\[bot\]|github-actions\[bot\]' <<< "$authors" || true)
+          if [[ -n "$humans" ]]; then
+            if [[ -z "$MEMBERS_TOKEN" ]]; then
+              echo "::error::No membership token. Check CLA_GATE_CLIENT_ID and" \
+                "CLA_GATE_PRIVATE_KEY against the setup steps in OffchainLabs/cla-gate."
+              exit 1
             fi
-          done <<< "$authors"
+            while read -r login; do
+              if [[ "$login" == "<unlinked>" ]]; then
+                echo "A commit author's email isn't linked to a GitHub account; leaving to" \
+                  "CLA assistant."
+                exit 0
+              fi
+              if ! is_member "$login"; then
+                echo "$login is not an org member; leaving license/cla to CLA assistant."
+                exit 0
+              fi
+            done <<< "$humans"
+          fi
+
+          # The commits listed are those of the pull request's head when fetched, which may be
+          # newer than HEAD_SHA. Only mark HEAD_SHA if it is still the head.
+          head_now=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.sha)
+          if [[ "$head_now" != "$HEAD_SHA" ]]; then
+            echo "Head moved to $head_now while checking; leaving to the run for the new head."
+            exit 0
+          fi
 
           gh api "repos/$REPO/statuses/$HEAD_SHA" --silent \
             -f state=success \

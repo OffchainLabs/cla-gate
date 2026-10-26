@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Stands in for curl in the gate's membership check. Prints the HTTP status the members API
+# would return: 204 for logins in $ORG_MEMBERS (case-insensitive), 404 otherwise, 401 for any
+# token but $VALID_TOKEN, or $MEMBERS_HTTP if set. Records each login checked in $CURL_LOG.
+set -euo pipefail
+
+url=${*: -1}
+prefix="https://api.github.com/orgs/OffchainLabs/members/"
+if [[ "$url" != "$prefix"* ]]; then
+  echo "curl stub: unexpected URL: $url" >&2
+  exit 1
+fi
+login=${url#"$prefix"}
+echo "$login" >>"$CURL_LOG"
+
+if [[ -n "${MEMBERS_HTTP:-}" ]]; then
+  echo "$MEMBERS_HTTP"
+  [[ "$MEMBERS_HTTP" != 000 ]]
+  exit
+fi
+if [[ "$*" != *"Authorization: Bearer $VALID_TOKEN"* ]]; then
+  echo 401
+  exit
+fi
+for member in $ORG_MEMBERS; do
+  if [[ "${member,,}" == "${login,,}" ]]; then
+    echo 204
+    exit
+  fi
+done
+echo 404
