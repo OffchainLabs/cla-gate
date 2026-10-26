@@ -1,16 +1,42 @@
 #!/usr/bin/env bash
-# Stands in for the AWS CLI in the gate's key step. Prints $FAKE_KEY for the expected
-# get-secret-value call, fails if $FAIL_AWS is set, and fails on any other call.
+# Stands in for the AWS CLI in the gate's key step. Assumes the role only with the expected
+# ARN and OIDC token (fails if $FAIL_STS is set), returns $FAKE_KEY only to a caller holding the
+# credentials it handed out (fails if $FAIL_AWS is set), and fails on any other call. Its errors
+# name the role, like AWS's do, so tests can check they never reach the log.
 set -euo pipefail
 
-expected="secretsmanager get-secret-value --secret-id cla-gate-app-key"
-expected+=" --query SecretString --output text"
-if [[ "$*" != "$expected" ]]; then
+sts="sts assume-role-with-web-identity --no-sign-request --role-arn $FAKE_ROLE_ARN"
+sts+=" --role-session-name cla-gate --web-identity-token fake-oidc-token --duration-seconds 900"
+sts+=" --query Credentials --output json"
+get="secretsmanager get-secret-value --secret-id cla-gate-app-key"
+get+=" --query SecretString --output text"
+creds='{"AccessKeyId":"ASIAFAKEKEYID","SecretAccessKey":"fake-secret",'
+creds+='"SessionToken":"fake-session"}'
+held="${AWS_ACCESS_KEY_ID:-}/${AWS_SECRET_ACCESS_KEY:-}/${AWS_SESSION_TOKEN:-}"
+
+case "$*" in
+"$sts")
+  if [[ -n "${FAIL_STS:-}" ]]; then
+    echo "An error occurred (AccessDenied) when calling the AssumeRoleWithWebIdentity operation:" \
+      "Not authorized to perform sts:AssumeRoleWithWebIdentity on $FAKE_ROLE_ARN" >&2
+    exit 254
+  fi
+  echo "$creds"
+  ;;
+"$get")
+  if [[ "$held" != "ASIAFAKEKEYID/fake-secret/fake-session" ]]; then
+    echo "Unable to locate credentials. You can configure credentials by running \"aws login\"." >&2
+    exit 253
+  fi
+  if [[ -n "${FAIL_AWS:-}" ]]; then
+    echo "An error occurred (AccessDeniedException) when calling the GetSecretValue operation:" \
+      "$FAKE_ROLE_ARN is not authorized" >&2
+    exit 254
+  fi
+  printf '%s\n' "$FAKE_KEY"
+  ;;
+*)
   echo "aws stub: unexpected call: aws $*" >&2
   exit 1
-fi
-if [[ -n "${FAIL_AWS:-}" ]]; then
-  echo "An error occurred (AccessDeniedException) when calling the GetSecretValue operation" >&2
-  exit 254
-fi
-printf '%s\n' "$FAKE_KEY"
+  ;;
+esac

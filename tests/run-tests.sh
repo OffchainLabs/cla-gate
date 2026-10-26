@@ -19,7 +19,6 @@ step_script() {
 
 step_script "Pass license/cla if every author is an org member" "$work/gate.sh"
 step_script "Read the app key" "$work/key.sh"
-step_script "Mask AWS identifiers" "$work/mask.sh"
 
 export PATH="$repo/tests/bin:$PATH"
 export GH_LOG="$work/gh.log" CURL_LOG="$work/curl.log"
@@ -79,24 +78,40 @@ run_gate "commit listing error" 1 "" "" "HTTP 502" FAIL_COMMITS=1
 fake_key=$'-----BEGIN RSA PRIVATE KEY-----\nMIIEfirstline\nMIIEsecondline\n'
 fake_key+='-----END RSA PRIVATE KEY-----'
 
-# Usage: run_key_step NAME RC [VAR=value ...]. Checks that the step prints nothing but masks,
-# masks every line of the key, and passes the key on intact only when it succeeds.
+key_env=(
+  FAKE_KEY="$fake_key" ROLE_ARN=arn:aws:iam::123456789012:role/gate-role
+  FAKE_ROLE_ARN=arn:aws:iam::123456789012:role/gate-role
+  ACTIONS_ID_TOKEN_REQUEST_URL="https://token.invalid/request?api-version=2.0"
+  ACTIONS_ID_TOKEN_REQUEST_TOKEN=request-token
+)
+# Each must be masked before anything could print it.
+secret_values=(fake-oidc-token ASIAFAKEKEYID fake-secret fake-session)
+
+# Usage: run_key_step NAME RC [VAR=value ...]. Checks that the step prints only masks and its own
+# errors, never AWS's (which name the role), and on success masks the token, the credentials and
+# every line of the key, and passes the key on intact.
 run_key_step() {
   local name=$1 want_rc=$2
   shift 2
-  local out="$work/github_output" output rc=0 ok=yes detail=""
+  local out="$work/github_output" output rc=0 ok=yes detail="" value line
   : >"$out"
-  output=$(env GITHUB_OUTPUT="$out" FAKE_KEY="$fake_key" "$@" bash "$work/key.sh" 2>&1) || rc=$?
+  output=$(env GITHUB_OUTPUT="$out" "${key_env[@]}" "$@" bash "$work/key.sh" 2>&1) || rc=$?
   if [[ "$rc" != "$want_rc" ]]; then
     ok=no detail="rc=$rc"
-  elif [[ -n "$(grep -v -e '^::add-mask::' -e "^::error::Couldn't read the app key" \
-    -e "^::error::The app key in AWS Secrets Manager isn't" <<<"$output" || true)" ]]; then
-    ok=no detail="printed something other than masks or its own error: $output"
+  elif [[ -n "$(grep -v -e '^::add-mask::' -e '^::error::' <<<"$output" || true)" ]]; then
+    ok=no detail="printed something other than masks or its own errors: $output"
+  elif [[ "$output" == *"arn:aws"* ]]; then
+    ok=no detail="printed the role ARN: $output"
   fi
   if [[ "$want_rc" == 0 && "$ok" == yes ]]; then
+    for value in "${secret_values[@]}"; do
+      if ! grep -qxF "::add-mask::$value" <<<"$output"; then
+        ok=no detail="didn't mask $value"
+      fi
+    done
     while IFS= read -r line; do
       if ! grep -qxF "::add-mask::$line" <<<"$output"; then
-        ok=no detail="unmasked line: $line"
+        ok=no detail="unmasked key line: $line"
       fi
     done <<<"$fake_key"
     if [[ "$(sed '1d;$d' "$out")" != "$fake_key" ]]; then
@@ -113,34 +128,15 @@ run_key_step() {
   fi
 }
 
-run_key_step "masks every line and passes the key on" 0
-run_key_step "AWS error writes nothing" 1 FAIL_AWS=1
+run_key_step "masks everything and passes the key on" 0
+run_key_step "no role ARN fails before contacting AWS" 1 ROLE_ARN=
+run_key_step "no OIDC token request URL fails" 1 ACTIONS_ID_TOKEN_REQUEST_URL=
+run_key_step "OIDC token error fails" 1 FAIL_OIDC=1
+run_key_step "role assumption error prints only its own message" 1 FAIL_STS=1
+run_key_step "secret read error prints only its own message" 1 FAIL_AWS=1
 run_key_step "empty secret writes nothing" 1 FAKE_KEY=
 run_key_step "binary secret (None) writes nothing" 1 FAKE_KEY=None
 run_key_step "non-PEM secret writes nothing" 1 FAKE_KEY=not-a-private-key
-
-# Usage: run_mask_step NAME RC ROLE_ARN ROLE_ID WANT. WANT is the expected output, one line each.
-run_mask_step() {
-  local name=$1 want_rc=$2 arn=$3 id=$4 want=$5 output rc=0
-  output=$(env ROLE_ARN="$arn" ROLE_ID="$id" bash "$work/mask.sh" 2>&1) || rc=$?
-  if [[ "$rc" == "$want_rc" && "$output" == "$want" ]]; then
-    echo "ok   mask step: $name"
-    return
-  fi
-  echo "FAIL mask step: $name: rc=$rc output='$output'"
-  failures=$((failures + 1))
-}
-
-arn="arn:aws:iam::123456789012:role/gate-role"
-masks=$'::add-mask::123456789012\n::add-mask::gate-role'
-not_arn="::error::CLA_GATE_AWS_ROLE_ARN isn't an IAM role ARN; not contacting AWS."
-run_mask_step "masks the account ID and role name" 0 "$arn" "" "$masks"
-run_mask_step "masks the role ID first" 0 "$arn" AROAEXAMPLE $'::add-mask::AROAEXAMPLE\n'"$masks"
-run_mask_step "masks a role name under a path" 0 "arn:aws:iam::123456789012:role/ci/gate-role" "" \
-  "$masks"
-run_mask_step "no role ARN prints nothing" 0 "" "" ""
-run_mask_step "malformed role ARN fails" 1 "not-an-arn" "" "$not_arn"
-run_mask_step "role ARN with a trailing space fails" 1 "$arn " "" "$not_arn"
 
 # The steps' scripts are tested above; these check how the workflow wires them together.
 workflow="$repo/.github/workflows/cla-gate.yml"
@@ -161,10 +157,9 @@ check_wiring "every step continues on error" \
 check_wiring "job permissions" \
   '.jobs.cla-gate.permissions | to_entries | map(.key + "=" + .value) | join(",")' \
   "id-token=write,pull-requests=read,statuses=write"
-check_wiring "AWS step needs the masks" "$(step "Assume the CLA gate AWS role") | .if" \
-  "steps.mask.outcome == 'success'"
-check_wiring "key step needs the AWS role" "$(step "Read the app key") | .if" \
-  "steps.aws.outcome == 'success'"
+# shellcheck disable=SC2016 # The workflow expression is meant literally.
+check_wiring "key step reads the role ARN secret" "$(step "Read the app key") | .env.ROLE_ARN" \
+  '${{ secrets.CLA_GATE_AWS_ROLE_ARN }}'
 check_wiring "token step needs the key" "$(step "Create org membership token") | .if" \
   "steps.key.outcome == 'success'"
 # shellcheck disable=SC2016 # The workflow expression is meant literally.

@@ -27,66 +27,68 @@ jobs:
     steps:
       # A broken gate must not decide a pull request, so failures are reported on the run without
       # failing the job, and CLA assistant decides. Dependabot runs get no Actions secrets, so
-      # the key steps fail for them; the last step passes bots without a token.
+      # the key step fails for them; the last step passes bots without a token.
       #
       # The app key lives in AWS Secrets Manager. The role trusts only this workflow on this
       # repository's main branch, so other workflows in gated repositories can't read it.
-      # Gated repositories can have public logs. The role ARN is a secret, so it's masked as a
-      # whole, but AWS errors can name the account or role inside other ARNs, the AWS action only
-      # masks the account ID once it has assumed the role, and it logs the role's unique ID, from
-      # which anyone with an AWS account can recover the ARN.
-      - name: Mask AWS identifiers
-        id: mask
+      # Gated repositories can have public logs, and AWS's output names the account, role and
+      # secret, so none of it is printed: on failure the step prints only its own message. The
+      # role ARN is a secret so it's masked if anything does print it.
+      - name: Read the app key
+        id: key
         continue-on-error: true
         env:
           ROLE_ARN: ${{ secrets.CLA_GATE_AWS_ROLE_ARN }}
-          ROLE_ID: ${{ secrets.CLA_GATE_AWS_ROLE_ID }}
-        run: |
-          if [[ -n "$ROLE_ID" ]]; then
-            echo "::add-mask::$ROLE_ID"
-          fi
-          if [[ -z "$ROLE_ARN" ]]; then
-            exit 0
-          fi
-          # IAM role names and paths only use these characters.
-          if [[ ! "$ROLE_ARN" =~ ^arn:aws:iam::([0-9]{12}):role/([A-Za-z0-9_+=,.@/-]+)$ ]]; then
-            echo "::error::CLA_GATE_AWS_ROLE_ARN isn't an IAM role ARN; not contacting AWS."
-            exit 1
-          fi
-          echo "::add-mask::${BASH_REMATCH[1]}"
-          echo "::add-mask::${BASH_REMATCH[2]##*/}"
-
-      - name: Assume the CLA gate AWS role
-        id: aws
-        if: steps.mask.outcome == 'success'
-        continue-on-error: true
-        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
-        with:
-          role-to-assume: ${{ secrets.CLA_GATE_AWS_ROLE_ARN }}
-          aws-region: us-east-2
-          role-duration-seconds: 900
-          mask-aws-account-id: true
-          # A denial won't succeed on retry, and each retry logs the error.
-          disable-retry: true
-
-      - name: Read the app key
-        id: key
-        if: steps.aws.outcome == 'success'
-        continue-on-error: true
+          AWS_DEFAULT_REGION: us-east-2
         run: |
           set -euo pipefail
-          # AWS errors name the role and secret, so they're kept out of the public logs.
+
+          fail() {
+            echo "::error::$*"
+            exit 1
+          }
+
+          if [[ -z "$ROLE_ARN" ]]; then
+            fail "CLA_GATE_AWS_ROLE_ARN isn't set; see the setup steps in OffchainLabs/cla-gate."
+          fi
+          if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+            fail "This run can't get a GitHub OIDC token; the job needs id-token: write."
+          fi
+
+          if ! oidc_token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" 2>/dev/null |
+            jq -r '.value // empty'); then
+            fail "Couldn't get a GitHub OIDC token."
+          fi
+          if [[ -z "$oidc_token" ]]; then
+            fail "Couldn't get a GitHub OIDC token."
+          fi
+          echo "::add-mask::$oidc_token"
+
+          if ! creds=$(aws sts assume-role-with-web-identity --no-sign-request \
+            --role-arn "$ROLE_ARN" --role-session-name cla-gate \
+            --web-identity-token "$oidc_token" --duration-seconds 900 \
+            --query Credentials --output json 2>/dev/null); then
+            fail "Couldn't assume the AWS role. The security team can find the cause in the" \
+              "account's CloudTrail logs."
+          fi
+          AWS_ACCESS_KEY_ID=$(jq -r .AccessKeyId <<< "$creds")
+          AWS_SECRET_ACCESS_KEY=$(jq -r .SecretAccessKey <<< "$creds")
+          AWS_SESSION_TOKEN=$(jq -r .SessionToken <<< "$creds")
+          echo "::add-mask::$AWS_ACCESS_KEY_ID"
+          echo "::add-mask::$AWS_SECRET_ACCESS_KEY"
+          echo "::add-mask::$AWS_SESSION_TOKEN"
+          export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+
           if ! key=$(aws secretsmanager get-secret-value --secret-id cla-gate-app-key \
             --query SecretString --output text 2>/dev/null); then
-            echo "::error::Couldn't read the app key from AWS Secrets Manager. The security team" \
-              "can find the cause in the account's CloudTrail logs."
-            exit 1
+            fail "Couldn't read the app key from AWS Secrets Manager. The security team can find" \
+              "the cause in the account's CloudTrail logs."
           fi
           # An unset or binary secret comes back empty or as "None"; don't pass that on.
           if [[ "$key" != "-----BEGIN "*" PRIVATE KEY-----"* ]]; then
-            echo "::error::The app key in AWS Secrets Manager isn't a PEM private key. Store the" \
-              "GitHub App's private key there as plain text."
-            exit 1
+            fail "The app key in AWS Secrets Manager isn't a PEM private key. Store the GitHub" \
+              "App's private key there as plain text."
           fi
           # Mask every line, since the masker matches single lines of a multi-line value.
           while IFS= read -r line; do

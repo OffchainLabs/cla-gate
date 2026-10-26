@@ -37,12 +37,12 @@ only such commits, apart from history that was already in a branch when it was f
 The app key is stored in the security team's AWS account. The gate assumes an AWS role with
 GitHub's OIDC token. The role trusts only this workflow on this repository's `main` branch, so
 other workflows in gated repositories can't read the key.
-Gated repositories can have public logs. The gate masks the role's ARN, the AWS account ID, the
-role name and the role's unique ID before contacting AWS, masks every line of the key once read,
-and doesn't print AWS's error messages from reading the key. The ARN and ID are org secrets so
-that they're masked; any workflow in an OffchainLabs repository can still read them, which is
-harmless because the role only trusts this workflow. The app has no permissions beyond
-**Members: read**.
+Gated repositories can have public logs, and AWS's output names the account, the role and the
+secret, so the gate calls AWS with the AWS CLI and prints none of its output; on failure it
+prints only its own message. It masks the OIDC token, the AWS credentials and every line of the
+key. The role's ARN is an org secret, so it's masked too; any workflow in an OffchainLabs
+repository can still read it, which is harmless because the role only trusts this workflow. The
+app has no permissions beyond **Members: read**.
 
 ## Setup
 
@@ -79,13 +79,11 @@ The security team manages the AWS role and the `cla-gate-app-key` secret. The ro
 that secret as plain text, not as key/value pairs, then delete the local `.pem`.
 The gate rejects any value that isn't a PEM private key.
 
-Store the role's ARN, the role's unique ID (`RoleId` from `aws iam get-role`, which the AWS action
-logs), and the app's client ID for the gate. `gh secret set` prompts for each value, which keeps
-them out of shell history:
+Store the role's ARN and the app's client ID for the gate. `gh secret set` prompts for the ARN,
+which keeps it out of shell history:
 
 ```sh
 gh secret set CLA_GATE_AWS_ROLE_ARN --org OffchainLabs --visibility all
-gh secret set CLA_GATE_AWS_ROLE_ID --org OffchainLabs --visibility all
 gh variable set CLA_GATE_CLIENT_ID --org OffchainLabs --visibility all --body CLIENT_ID
 ```
 

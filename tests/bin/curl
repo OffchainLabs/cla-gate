@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
-# Stands in for curl in the gate's membership check. Prints the HTTP status the members API
-# would return: 204 for logins in $ORG_MEMBERS (case-insensitive), 404 otherwise, 401 for any
-# token but $VALID_TOKEN, or $MEMBERS_HTTP if set. Records each login checked in $CURL_LOG.
+# Stands in for curl in the gate. For the OIDC token request it prints a token, or fails if
+# $FAIL_OIDC is set. For the membership check it prints the HTTP status the members API would
+# return: 204 for logins in $ORG_MEMBERS (case-insensitive), 404 otherwise, 401 for any token but
+# $VALID_TOKEN, or $MEMBERS_HTTP if set, and records each login checked in $CURL_LOG.
 set -euo pipefail
 
 url=${*: -1}
+
+if [[ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" && "$url" == "$ACTIONS_ID_TOKEN_REQUEST_URL"* ]]; then
+  if [[ -n "${FAIL_OIDC:-}" ]]; then
+    echo "curl: (22) The requested URL returned error: 500" >&2
+    exit 22
+  fi
+  echo '{"value":"fake-oidc-token"}'
+  exit
+fi
+
 prefix="https://api.github.com/orgs/OffchainLabs/members/"
 if [[ "$url" != "$prefix"* ]]; then
   echo "curl stub: unexpected URL: $url" >&2
