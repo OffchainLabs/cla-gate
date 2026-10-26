@@ -1,6 +1,6 @@
 name: CLA gate
 
-# Run in other repositories by an enterprise ruleset (see README.md). Marks `license/cla` as
+# Run in other repositories by an organization ruleset (see README.md). Marks `license/cla` as
 # passing for pull requests written entirely by OffchainLabs members, so internal work isn't
 # blocked when CLA assistant stalls. Every other pull request is left for CLA assistant to decide.
 on:
@@ -15,9 +15,8 @@ concurrency:
 jobs:
   cla-gate:
     name: CLA gate
-    # Only people with write access can open pull requests from branches in the repository, so
-    # runs that can reach the app key are never started by outsiders. Pull requests from forks
-    # fall back to CLA assistant.
+    # Pull requests from forks fall back to CLA assistant. Only people with write access can open
+    # pull requests from branches in the repository.
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
@@ -26,22 +25,12 @@ jobs:
     steps:
       # A broken gate must never block merges, so failures are reported on the run without
       # failing the job. CLA assistant still decides the pull request.
-      - name: Create org membership token
-        id: app-token
-        continue-on-error: true
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
-        with:
-          client-id: ${{ vars.CLA_GATE_CLIENT_ID }}
-          private-key: ${{ secrets.CLA_GATE_PRIVATE_KEY }}
-          owner: OffchainLabs
-          permission-members: read
-
       - name: Pass license/cla if every author is an org member
-        if: steps.app-token.outcome == 'success'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          MEMBERS_TOKEN: ${{ steps.app-token.outputs.token }}
+          # Written hourly by sync-members.yml, as ",login1,login2,...,".
+          MEMBERS: ${{ vars.CLA_MEMBERS }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
@@ -50,24 +39,17 @@ jobs:
         run: |
           set -euo pipefail
 
+          if [[ -z "$MEMBERS" ]]; then
+            echo "::error::CLA_MEMBERS is empty or unset. Check the Sync members workflow in" \
+              "OffchainLabs/cla-gate."
+            exit 1
+          fi
+
           is_member() {
             case "$1" in
               dependabot\[bot\] | github-actions\[bot\]) return 0 ;;
             esac
-            local code
-            code=$(curl -sS -o /dev/null -w '%{http_code}' \
-              -H "Authorization: Bearer $MEMBERS_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/orgs/OffchainLabs/members/$1")
-            case "$code" in
-              204) return 0 ;;
-              404) return 1 ;;
-              *)
-                echo "::error::Membership check for $1 returned HTTP $code; expected 204 or 404." \
-                  "Check that the CLA gate app has members:read on OffchainLabs."
-                exit 1
-                ;;
-            esac
+            [[ "$MEMBERS" == *",$1,"* ]]
           }
 
           if ! is_member "$PR_AUTHOR"; then
