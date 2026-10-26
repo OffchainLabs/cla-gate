@@ -41,6 +41,8 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Earlier successes are recognised by this exact text, so changing it stops the gate
+          # from withdrawing successes posted before the change.
           pass_description="All authors are OffchainLabs members (CLA gate)"
 
           # A success this gate posted on HEAD_SHA earlier, for instance in another pull request
@@ -69,6 +71,9 @@ jobs:
             withdraw_own_success
             exit 1
           }
+
+          # Unexpected failures, such as an API error, also mean the gate can't pass HEAD_SHA.
+          trap withdraw_own_success ERR
 
           # Must match hash_login in sync-members.yml.
           hash_login() {

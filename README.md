@@ -144,6 +144,9 @@ OffchainLabs.
 - Ruleset workflows ignore `types` filters and run only when a pull request is opened, reopened, or
   pushed to. Changing a pull request's base branch doesn't rerun the gate, so a success from the
   old base stays. Close and reopen the pull request after changing its base.
+- Ruleset workflows don't run on events caused by `GITHUB_TOKEN`, so a pull request opened or
+  pushed to by a workflow using it never runs the gate and waits on the required workflow. Close
+  and reopen it to run the gate, or open such pull requests with a GitHub App token.
 - A repository variable takes precedence over an organization variable of the same name, so an
   admin of a gated repository can override `CLA_MEMBERS` there and pass anyone. The gate can't
   detect this. It doesn't add much: any member can already pass an outsider's code by committing it
