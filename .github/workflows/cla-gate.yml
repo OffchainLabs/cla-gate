@@ -29,12 +29,14 @@ jobs:
       # failing the job, and CLA assistant decides. Dependabot runs get no Actions secrets, so
       # the key steps fail for them; the last step passes bots without a token.
       #
-      # The app key lives in AWS Secrets Manager. The role trusts only this workflow at its pinned
-      # commit, so other workflows in gated repositories can't read it. The role ARN is a secret
-      # so it's masked in the public logs of gated repositories.
-      # The role ARN is masked as a whole, but AWS errors can name the account or role inside other
-      # ARNs, and the AWS action only masks the account ID once it has assumed the role.
+      # The app key lives in AWS Secrets Manager. The role trusts only this workflow at the
+      # commits the security team lists, so other workflows in gated repositories can't read it.
+      # Gated repositories can have public logs. The role ARN is a secret, so it's masked as a
+      # whole, but AWS errors can name the account or role inside other ARNs, and the AWS action
+      # only masks the account ID once it has assumed the role.
       - name: Mask AWS identifiers
+        id: mask
+        continue-on-error: true
         env:
           ROLE_ARN: ${{ secrets.CLA_GATE_AWS_ROLE_ARN }}
         run: |
@@ -45,6 +47,7 @@ jobs:
 
       - name: Assume the CLA gate AWS role
         id: aws
+        if: steps.mask.outcome == 'success'
         continue-on-error: true
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
         with:
@@ -64,6 +67,12 @@ jobs:
             --query SecretString --output text 2>/dev/null); then
             echo "::error::Couldn't read the app key from AWS Secrets Manager. The security team" \
               "can find the cause in the account's CloudTrail logs."
+            exit 1
+          fi
+          # An unset or binary secret comes back empty or as "None"; don't pass that on.
+          if [[ "$key" != "-----BEGIN "*" PRIVATE KEY-----"* ]]; then
+            echo "::error::The app key in AWS Secrets Manager isn't a PEM private key. Store the" \
+              "GitHub App's private key there as plain text."
             exit 1
           fi
           # Mask every line, since the masker matches single lines of a multi-line value.

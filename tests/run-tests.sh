@@ -89,8 +89,8 @@ run_key_step() {
   output=$(env GITHUB_OUTPUT="$out" FAKE_KEY="$fake_key" "$@" bash "$work/key.sh" 2>&1) || rc=$?
   if [[ "$rc" != "$want_rc" ]]; then
     ok=no detail="rc=$rc"
-  elif [[ -n "$(grep -v -e '^::add-mask::' -e "^::error::Couldn't read the app key" <<<"$output" ||
-    true)" ]]; then
+  elif [[ -n "$(grep -v -e '^::add-mask::' -e "^::error::Couldn't read the app key" \
+    -e "^::error::The app key in AWS Secrets Manager isn't" <<<"$output" || true)" ]]; then
     ok=no detail="printed something other than masks or its own error: $output"
   fi
   if [[ "$want_rc" == 0 && "$ok" == yes ]]; then
@@ -115,6 +115,9 @@ run_key_step() {
 
 run_key_step "masks every line and passes the key on" 0
 run_key_step "AWS error writes nothing" 1 FAIL_AWS=1
+run_key_step "empty secret writes nothing" 1 FAKE_KEY=
+run_key_step "binary secret (None) writes nothing" 1 FAKE_KEY=None
+run_key_step "non-PEM secret writes nothing" 1 FAKE_KEY=not-a-private-key
 
 # Usage: run_mask_step NAME ROLE_ARN WANT. WANT is the expected output, one mask per line.
 run_mask_step() {
