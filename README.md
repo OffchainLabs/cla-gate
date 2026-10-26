@@ -73,7 +73,8 @@ already be enabled for those repositories.
 
 The security team manages the AWS role and the `cla-gate-app-key` secret. The role must trust
 `OffchainLabs/cla-gate/.github/workflows/cla-gate.yml` at the commit the ruleset pins. Put the
-private key in that secret, then delete the local `.pem`.
+private key in that secret as plain text, not as key/value pairs, then delete the local `.pem`.
+The gate rejects any value that isn't a PEM private key.
 
 Store the role's ARN and the app's client ID for the gate. `gh secret set` prompts for the ARN,
 which keeps it out of shell history:
