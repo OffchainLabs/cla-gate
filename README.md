@@ -29,7 +29,7 @@ The gate decides as follows:
 2. `dependabot[bot]` and `github-actions[bot]` count as members without consulting
    `CLA_MEMBERS`, because Dependabot runs don't get `CLA_MEMBERS_KEY`.
 3. If `CLA_MEMBERS` was last synced more than 24 hours ago, it reports an error and stops, so
-   people who have left the organization don't keep passing while the sync is broken.
+   people who have left the organization don't get new passes while the sync is broken.
 4. If the pull request author or any commit author isn't a member, or a commit's email isn't
    linked to a GitHub account, it stops. Git author emails are unverified, so commit authors are
    checked as well as the authenticated pull request author.
@@ -39,11 +39,14 @@ The gate decides as follows:
 
 Statuses belong to a commit, not a pull request, so a success can outlive the reason for it: the
 same commit can be opened against another branch whose history brings in other people's commits.
-Whenever the gate stops or errors after an earlier success of its own on that commit, it replaces
-that success with `license/cla: pending`. Its **Details** link asks CLA assistant to recheck.
+When the gate stops or errors on a commit that still has an earlier success of its own, it
+replaces that success with `license/cla: pending`, so CLA assistant decides instead. Its
+**Details** link asks CLA assistant to recheck. The exception is a head that moved during the
+check, which the run for the new head handles.
 
-Errors are reported on the run but never fail it, so a broken gate can't block merges. New members
-pass once the next sync runs; until then their pull requests wait on CLA assistant.
+Errors are reported on the run but never fail it, and the gate never posts a failure, so a broken
+gate only ever leaves pull requests to CLA assistant. New members pass once the next sync runs;
+until then their pull requests wait on CLA assistant.
 
 ## Setup
 
@@ -127,7 +130,9 @@ output. CI runs it on every pull request. To run it locally you need `yq` and GN
 
 ## Tested behaviour
 
-Verified with an OffchainLabs organization ruleset on `OffchainLabs/cla-gate-test`:
+Verified with an OffchainLabs organization ruleset on `OffchainLabs/cla-gate-test`, before the
+member list was hashed and timestamped and before the gate withdrew its own successes. Repeat
+these checks after deploying those changes:
 
 - The ruleset runs this workflow in the target repository, in both Evaluate and Active mode.
 - Sync members writes all organization members to `CLA_MEMBERS`, and the gate reads it.
@@ -144,10 +149,17 @@ OffchainLabs.
 
 - GitHub disables scheduled workflows in public repositories after 60 days without repository
   activity. Writing `CLA_MEMBERS` doesn't count, so once this repository goes quiet the sync stops.
-  A day later the gate starts reporting errors and every pull request waits on CLA assistant.
-  Re-enable **Sync members** from the Actions tab if that happens.
+  A day later, each new gate run reports an error and leaves its pull request to CLA assistant.
+  Successes the gate already posted aren't revisited, so open pull requests that passed earlier
+  stay passed. Re-enable **Sync members** from the Actions tab if that happens.
 - `CLA_MEMBERS` can be up to an hour old. New members' pull requests wait on CLA assistant until
-  the next sync, and people who left can pass until then.
+  the next sync, and people who left can get new passes until then. Passes they already have stay.
+- A success belongs to a commit, so it counts in every pull request with that head commit. If the
+  gate passes a commit in one pull request after declining it in another with a different base,
+  the second pull request passes too. Rerunning the gate there (close and reopen) withdraws it.
+- The gate checks that the latest `license/cla` status is its own success and then replaces it,
+  in two API calls. If CLA assistant posts a success in between, the gate overwrites it with
+  pending, and the pull request waits until someone uses the **Details** link to recheck.
 - Ruleset workflows ignore `types` filters and run only when a pull request is opened, reopened, or
   pushed to. Changing a pull request's base branch doesn't rerun the gate, so a success from the
   old base stays. Close and reopen the pull request after changing its base.
