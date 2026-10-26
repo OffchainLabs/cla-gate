@@ -104,13 +104,17 @@ jobs:
             # A stale list could still contain people who have left the organization.
             synced_at=${CLA_MEMBERS%%|*}
             members=${CLA_MEMBERS#*|}
-            if ! synced_epoch=$(date -u -d "$synced_at" +%s 2>/dev/null); then
+            # `date -d` also accepts "" and words like "now", so check the exact format first.
+            timestamp_format='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+            if [[ ! "$synced_at" =~ $timestamp_format ]] \
+              || ! synced_epoch=$(date -u -d "$synced_at" +%s 2>/dev/null); then
               fail "CLA_MEMBERS has no valid sync timestamp. Run the Sync members workflow in" \
                 "OffchainLabs/cla-gate."
             fi
-            if (( $(date -u +%s) - synced_epoch > 24 * 3600 )); then
-              fail "CLA_MEMBERS was last synced at $synced_at. Re-enable or fix the Sync" \
-                "members workflow in OffchainLabs/cla-gate."
+            age=$(( $(date -u +%s) - synced_epoch ))
+            if (( age > 24 * 3600 || age < -300 )); then
+              fail "CLA_MEMBERS was last synced at $synced_at, which is stale or in the future." \
+                "Re-enable or fix the Sync members workflow in OffchainLabs/cla-gate."
             fi
 
             while read -r login; do
