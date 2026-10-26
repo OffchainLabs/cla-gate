@@ -1,7 +1,7 @@
 name: Sync members
 
-# Copies the OffchainLabs member list into the CLA_MEMBERS organization variable, which the CLA
-# gate reads. The app key lives only in the cla-gate-sync environment, which deploys only from
+# Writes keyed hashes of the OffchainLabs member list to the CLA_MEMBERS organization variable,
+# which the CLA gate reads. The app key lives only in the cla-gate-sync environment, which deploys only from
 # main, so gated repositories never have access to it.
 on:
   schedule:
@@ -42,8 +42,8 @@ jobs:
             exit 1
           fi
 
-          # The variable is readable by workflows in fork pull requests, which don't get
-          # secrets, so it holds keyed hashes rather than logins. Must match hash_login in
+          # GitHub only promises to withhold secrets, not variables, from fork pull requests, so
+          # the variable holds keyed hashes rather than logins. Must match hash_login in
           # cla-gate.yml.
           hash_login() {
             printf '%s' "${1,,}" | openssl dgst -sha256 -hmac "$CLA_MEMBERS_KEY" -r | cut -d' ' -f1

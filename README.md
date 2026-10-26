@@ -15,8 +15,8 @@ Two workflows:
 - **`cla-gate.yml`** is run by the ruleset in each gated repository. It checks logins against
   `CLA_MEMBERS` and never has access to the app key.
 
-Most members keep their membership concealed, and workflows in fork pull requests can read
-organization variables. So `CLA_MEMBERS` holds an HMAC-SHA256 of each lowercased login rather than
+Most members keep their membership concealed, and GitHub only promises to withhold secrets, not
+variables, from workflows in fork pull requests. So `CLA_MEMBERS` holds an HMAC-SHA256 of each lowercased login rather than
 the login itself, keyed with the `CLA_MEMBERS_KEY` organization secret. Fork pull requests don't
 get secrets, so they see only hashes they can't check guesses against. Anyone who can run a
 workflow in an OffchainLabs repository from a branch, which takes write access, can read the key
