@@ -35,8 +35,8 @@ passed the gate or CLA assistant. Opening the same commit against another target
 only such commits, apart from history that was already in a branch when it was first targeted.
 
 The app key is stored in the security team's AWS account. The gate assumes an AWS role with
-GitHub's OIDC token. The role trusts only this workflow, at the commits the security team lists
-(the pinned one and the one before), so other workflows in gated repositories can't read the key.
+GitHub's OIDC token. The role trusts only this workflow on this repository's `main` branch, so
+other workflows in gated repositories can't read the key.
 The role's ARN is an Actions secret, the gate masks the AWS account ID and role name before
 contacting AWS and every line of the key once read, and it doesn't print AWS's error messages from
 reading the key, so none of these appear in the public logs of gated repositories. The app has no
@@ -49,8 +49,9 @@ Requires an OffchainLabs organization owner.
 ### 1. Publish this repository
 
 `OffchainLabs/cla-gate` must be **public**, because a ruleset workflow must be at least as visible
-as the repositories it runs in. Changes reach gated repositories only when the ruleset's pinned
-commit is updated, so review changes before updating the pin.
+as the repositories it runs in. The ruleset runs the workflow from `main`, so every merge to
+`main` deploys to all gated repositories at once and can read the app key. Keep `main` behind
+reviewed pull requests and the required checks.
 
 ### 2. Create the GitHub App
 
@@ -72,8 +73,8 @@ already be enabled for those repositories.
 ### 4. Store the key
 
 The security team manages the AWS role and the `cla-gate-app-key` secret. The role must trust
-`OffchainLabs/cla-gate/.github/workflows/cla-gate.yml` at the commit the ruleset pins. Put the
-private key in that secret as plain text, not as key/value pairs, then delete the local `.pem`.
+`OffchainLabs/cla-gate/.github/workflows/cla-gate.yml@refs/heads/main`. Put the private key in
+that secret as plain text, not as key/value pairs, then delete the local `.pem`.
 The gate rejects any value that isn't a PEM private key.
 
 Store the role's ARN and the app's client ID for the gate. `gh secret set` prompts for the ARN,
@@ -99,11 +100,8 @@ Organization settings → Rulesets → New branch ruleset:
   through pull requests, because requiring a workflow blocks direct pushes.
 - **Require status checks to pass**: `license/cla`.
 - **Require workflows to pass before merging**: `OffchainLabs/cla-gate`,
-  `.github/workflows/cla-gate.yml`, pinned to a commit SHA.
-
-To deploy a change, have the security team add its commit to the role's trusted commits, then
-update the pin. If the pin moves first, gate runs can't read the key until the role trusts the
-new commit, and pull requests wait on CLA assistant.
+  `.github/workflows/cla-gate.yml`, at ref `refs/heads/main`. Pin to the branch, not a commit:
+  the role trusts the workflow only by that ref, so a run pinned to a commit can't read the key.
 
 Start in **Evaluate** mode, open a pull request in a gated repository, then switch to **Active**.
 
@@ -131,6 +129,8 @@ With earlier versions of the gate:
   workflow, so the pull request waits only on CLA assistant.
 - With the app not installed, the run reports the error, posts nothing, and still passes.
 - The ruleset doesn't run the workflow on pull requests into branches it doesn't target.
+- A ruleset can pin the workflow to a branch, and the run's OIDC token then has
+  `job_workflow_ref` ending in that branch ref (`@refs/heads/<branch>`), not the commit.
 
 On `arbitrum-docs` before gating, CLA assistant only ever posted `license/cla: success` on member
 pull requests, from minutes to over a day after they opened, and sometimes never.

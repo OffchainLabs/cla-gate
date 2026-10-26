@@ -29,8 +29,8 @@ jobs:
       # failing the job, and CLA assistant decides. Dependabot runs get no Actions secrets, so
       # the key steps fail for them; the last step passes bots without a token.
       #
-      # The app key lives in AWS Secrets Manager. The role trusts only this workflow at the
-      # commits the security team lists, so other workflows in gated repositories can't read it.
+      # The app key lives in AWS Secrets Manager. The role trusts only this workflow on this
+      # repository's main branch, so other workflows in gated repositories can't read it.
       # Gated repositories can have public logs. The role ARN is a secret, so it's masked as a
       # whole, but AWS errors can name the account or role inside other ARNs, and the AWS action
       # only masks the account ID once it has assumed the role.
