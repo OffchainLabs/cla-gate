@@ -1,8 +1,8 @@
 name: Sync members
 
 # Writes keyed hashes of the OffchainLabs member list to the CLA_MEMBERS organization variable,
-# which the CLA gate reads. The app key lives only in the cla-gate-sync environment, which deploys only from
-# main, so gated repositories never have access to it.
+# which the CLA gate reads. The app key lives only in the cla-gate-sync environment, which
+# deploys only from main, so gated repositories never have access to it.
 on:
   schedule:
     - cron: "17 * * * *"
