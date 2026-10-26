@@ -5,8 +5,6 @@ name: CLA gate
 # blocked when CLA assistant stalls. Every other pull request is left for CLA assistant to decide.
 on:
   pull_request:
-    # `edited` covers a changed base branch, which changes the commits in the pull request.
-    types: [opened, synchronize, reopened, edited]
 
 permissions: {}
 
@@ -45,11 +43,10 @@ jobs:
 
           pass_description="All authors are OffchainLabs members (CLA gate)"
 
-          # Leaves license/cla to CLA assistant. A success this gate posted on HEAD_SHA earlier,
-          # for instance before the base branch changed, no longer holds, so it is withdrawn.
-          decline() {
-            echo "$1; leaving license/cla to CLA assistant."
-            latest=$(gh api "repos/$REPO/commits/$HEAD_SHA/status" --jq \
+          # A success this gate posted on HEAD_SHA earlier, for instance in another pull request
+          # with a different base, no longer holds once the gate can't pass it here.
+          withdraw_own_success() {
+            latest=$(gh api --paginate "repos/$REPO/commits/$HEAD_SHA/status?per_page=100" --jq \
               '.statuses[] | select(.context == "license/cla") | "\(.state) \(.description)"')
             if [[ "$latest" == "success $pass_description" ]]; then
               gh api "repos/$REPO/statuses/$HEAD_SHA" --silent \
@@ -59,7 +56,18 @@ jobs:
                 -f target_url="https://cla-assistant.io/check/$REPO?pullRequest=$PR_NUMBER"
               echo "Withdrew the gate's earlier success on $HEAD_SHA."
             fi
+          }
+
+          decline() {
+            echo "$1; leaving license/cla to CLA assistant."
+            withdraw_own_success
             exit 0
+          }
+
+          fail() {
+            echo "::error::$*"
+            withdraw_own_success
+            exit 1
           }
 
           # Must match hash_login in sync-members.yml.
@@ -84,23 +92,20 @@ jobs:
           humans=$(grep -vxE 'dependabot\[bot\]|github-actions\[bot\]' <<< "$authors" || true)
           if [[ -n "$humans" ]]; then
             if [[ -z "$CLA_MEMBERS" || -z "$CLA_MEMBERS_KEY" ]]; then
-              echo "::error::CLA_MEMBERS or CLA_MEMBERS_KEY is empty or unset. See the setup" \
-                "steps in OffchainLabs/cla-gate."
-              exit 1
+              fail "CLA_MEMBERS or CLA_MEMBERS_KEY is empty or unset. See the setup steps in" \
+                "OffchainLabs/cla-gate."
             fi
 
             # A stale list could still contain people who have left the organization.
             synced_at=${CLA_MEMBERS%%|*}
             members=${CLA_MEMBERS#*|}
             if ! synced_epoch=$(date -u -d "$synced_at" +%s 2>/dev/null); then
-              echo "::error::CLA_MEMBERS has no valid sync timestamp. Run the Sync members" \
-                "workflow in OffchainLabs/cla-gate."
-              exit 1
+              fail "CLA_MEMBERS has no valid sync timestamp. Run the Sync members workflow in" \
+                "OffchainLabs/cla-gate."
             fi
             if (( $(date -u +%s) - synced_epoch > 24 * 3600 )); then
-              echo "::error::CLA_MEMBERS was last synced at $synced_at. Re-enable or fix the" \
-                "Sync members workflow in OffchainLabs/cla-gate."
-              exit 1
+              fail "CLA_MEMBERS was last synced at $synced_at. Re-enable or fix the Sync" \
+                "members workflow in OffchainLabs/cla-gate."
             fi
 
             while read -r login; do

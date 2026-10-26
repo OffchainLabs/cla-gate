@@ -38,10 +38,9 @@ The gate decides as follows:
 6. Otherwise it posts `license/cla: success` on the head commit, labelled "(CLA gate)".
 
 Statuses belong to a commit, not a pull request, so a success can outlive the reason for it: the
-base branch can change and bring in other people's commits, or the same commit can be opened
-against another branch. The gate reruns when a pull request is edited, and whenever it stops
-after an earlier success of its own on that commit, it replaces that success with
-`license/cla: pending`. Its **Details** link asks CLA assistant to recheck.
+same commit can be opened against another branch whose history brings in other people's commits.
+Whenever the gate stops or errors after an earlier success of its own on that commit, it replaces
+that success with `license/cla: pending`. Its **Details** link asks CLA assistant to recheck.
 
 Errors are reported on the run but never fail it, so a broken gate can't block merges. New members
 pass once the next sync runs; until then their pull requests wait on CLA assistant.
@@ -142,6 +141,9 @@ OffchainLabs.
   Re-enable **Sync members** from the Actions tab if that happens.
 - `CLA_MEMBERS` can be up to an hour old. New members' pull requests wait on CLA assistant until
   the next sync, and people who left can pass until then.
+- Ruleset workflows ignore `types` filters and run only when a pull request is opened, reopened, or
+  pushed to. Changing a pull request's base branch doesn't rerun the gate, so a success from the
+  old base stays. Close and reopen the pull request after changing its base.
 - A repository variable takes precedence over an organization variable of the same name, so an
   admin of a gated repository can override `CLA_MEMBERS` there and pass anyone. The gate can't
   detect this. It doesn't add much: any member can already pass an outsider's code by committing it
