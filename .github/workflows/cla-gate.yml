@@ -23,8 +23,8 @@ jobs:
       pull-requests: read
       statuses: write
     steps:
-      # A broken gate must never block merges, so failures are reported on the run without
-      # failing the job. CLA assistant still decides the pull request.
+      # A broken gate must not decide a pull request, so failures are reported on the run without
+      # failing the job. At most it withdraws its own earlier success, and CLA assistant decides.
       - name: Pass license/cla if every author is an org member
         continue-on-error: true
         env:
