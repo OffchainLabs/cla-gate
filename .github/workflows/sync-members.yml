@@ -54,10 +54,18 @@ jobs:
             echo "::error::The member list came back empty; leaving CLA_MEMBERS unchanged."
             exit 1
           fi
-          hashes=$(while read -r login; do hash_login "$login"; done <<< "$members")
-          # The timestamp lets the gate reject a list the sync stopped updating. Commas at both
-          # ends of the list let the gate match ",hash," exactly.
-          value="$(date -u +%Y-%m-%dT%H:%M:%SZ)|,$(paste -sd, - <<< "$hashes"),"
+          # Commas at both ends of the list let the gate match ",hash," exactly. The loop runs in
+          # this shell rather than in $(...), so set -e stops the sync if any hash fails.
+          hash_list=","
+          while read -r login; do
+            hash_list+="$(hash_login "$login"),"
+          done <<< "$members"
+          if [[ ! "$hash_list" =~ ^(,[0-9a-f]{64})+,$ ]]; then
+            echo "::error::Hashing the member list failed; leaving CLA_MEMBERS unchanged."
+            exit 1
+          fi
+          # The timestamp lets the gate reject a list the sync stopped updating.
+          value="$(date -u +%Y-%m-%dT%H:%M:%SZ)|$hash_list"
 
           if gh api orgs/OffchainLabs/actions/variables/CLA_MEMBERS --silent 2>/dev/null; then
             gh api -X PATCH orgs/OffchainLabs/actions/variables/CLA_MEMBERS --silent \

@@ -117,11 +117,19 @@ jobs:
                 "Re-enable or fix the Sync members workflow in OffchainLabs/cla-gate."
             fi
 
+            # Only full hashes, so an empty hash from a failed sync or lookup can't match.
+            members_format='^(,[0-9a-f]{64})+,$'
+            if [[ ! "$members" =~ $members_format ]]; then
+              fail "CLA_MEMBERS has a malformed member list. Run the Sync members workflow in" \
+                "OffchainLabs/cla-gate."
+            fi
+
             while read -r login; do
               if [[ "$login" == "<unlinked>" ]]; then
                 decline "A commit author's email isn't linked to a GitHub account"
               fi
-              if [[ "$members" != *",$(hash_login "$login"),"* ]]; then
+              login_hash=$(hash_login "$login")
+              if [[ "$members" != *",$login_hash,"* ]]; then
                 decline "$login is not an org member"
               fi
             done <<< "$humans"
