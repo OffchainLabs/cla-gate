@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Passes through to the real openssl unless run-tests.sh asks for a failure: FAIL_OPENSSL fails
+# every call, FAIL_OPENSSL_ONCE (a marker file path) fails only the first.
+set -euo pipefail
+
+if [[ -n "${FAIL_OPENSSL:-}" ]]; then
+  echo "openssl stub: failing as asked" >&2
+  exit 1
+fi
+if [[ -n "${FAIL_OPENSSL_ONCE:-}" && ! -e "$FAIL_OPENSSL_ONCE" ]]; then
+  touch "$FAIL_OPENSSL_ONCE"
+  echo "openssl stub: failing once as asked" >&2
+  exit 1
+fi
+exec "$REAL_OPENSSL" "$@"

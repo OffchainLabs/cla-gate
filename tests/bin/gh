@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Stands in for the GitHub CLI. Answers the API calls the workflows make from variables set by
+# run-tests.sh, records writes in $GH_LOG, and fails on any call it doesn't recognise.
+set -euo pipefail
+
+args="$*"
+case "$args" in
+*"-X PATCH"*)
+  for arg in "$@"; do
+    if [[ "$arg" == value=* ]]; then
+      echo "written ${arg#value=}" >>"$GH_LOG"
+    fi
+  done
+  ;;
+*"commits/"*"/status"*)
+  if [[ -n "${LATEST_STATUS:-}" ]]; then
+    echo "$LATEST_STATUS"
+  fi
+  ;;
+*"--jq .commits"*)
+  echo "${COMMIT_COUNT:-1}"
+  ;;
+*"--jq .head.sha"*)
+  echo "${HEAD_NOW:-$HEAD_SHA}"
+  ;;
+*"pulls/"*"/commits"*)
+  if [[ -n "${FAIL_COMMITS:-}" ]]; then
+    echo "HTTP 502: Bad Gateway" >&2
+    exit 1
+  fi
+  # shellcheck disable=SC2086 # Splitting the space-separated list is intended.
+  printf '%s\n' ${COMMIT_AUTHORS:-alice}
+  ;;
+*"statuses/"*)
+  for arg in "$@"; do
+    if [[ "$arg" == state=* ]]; then
+      echo "${arg#state=}" >>"$GH_LOG"
+    fi
+  done
+  ;;
+*"orgs/OffchainLabs/members"*)
+  # shellcheck disable=SC2086 # Splitting the space-separated list is intended.
+  printf '%s\n' ${ORG_MEMBERS-alice bob}
+  ;;
+*"actions/variables/CLA_MEMBERS --silent")
+  ;;
+*)
+  echo "gh stub: unexpected call: gh $args" >&2
+  exit 1
+  ;;
+esac

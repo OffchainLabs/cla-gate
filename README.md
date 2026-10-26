@@ -118,6 +118,13 @@ Organization settings → Rulesets → New branch ruleset:
 
 Start in **Evaluate** mode, open a pull request in a gated repository, then switch to **Active**.
 
+## Tests
+
+`tests/run-tests.sh` pulls the scripts out of both workflows and runs them against stub `gh` and
+`openssl` commands, checking each case's exit code, the statuses or variable it writes, and its
+output. CI runs it on every pull request. To run it locally you need `yq` and GNU `date`; on macOS,
+`brew install yq coreutils` and put `$(brew --prefix coreutils)/libexec/gnubin` first on `PATH`.
+
 ## Tested behaviour
 
 Verified with an OffchainLabs organization ruleset on `OffchainLabs/cla-gate-test`:
