@@ -82,12 +82,16 @@ Enterprise settings → Policies → Code → Rulesets → New branch ruleset:
 
 Start in **Evaluate** mode, open a pull request in a gated repository, then switch to **Active**.
 
-## Verify on a test repository
+## Tested behaviour
 
-These behaviours aren't covered by GitHub's documentation and should be checked before going
-Active:
+Verified with an OffchainLabs organization ruleset on `OffchainLabs/cla-gate-test`:
 
-- An enterprise ruleset can run this workflow in repositories outside OffchainLabs.
-- The ruleset-run workflow receives the target organization's `CLA_GATE_PRIVATE_KEY` and
-  `CLA_GATE_CLIENT_ID`.
-- A fork pull request, where the job is skipped, still satisfies the required workflow.
+- The ruleset runs this workflow in the target repository, in both Evaluate and Active mode.
+- The run receives the organization's `CLA_GATE_PRIVATE_KEY` and `CLA_GATE_CLIENT_ID`.
+- A branch pull request by a member gets `license/cla: success` from the gate.
+- A fork pull request skips the job, posts nothing, and the skipped run satisfies the required
+  workflow, so the pull request waits only on CLA assistant.
+- With the app not installed, the run reports the error, posts nothing, and still passes.
+
+Not yet tested: an enterprise ruleset running this workflow in organizations other than
+OffchainLabs.
