@@ -37,10 +37,12 @@ only such commits, apart from history that was already in a branch when it was f
 The app key is stored in the security team's AWS account. The gate assumes an AWS role with
 GitHub's OIDC token. The role trusts only this workflow on this repository's `main` branch, so
 other workflows in gated repositories can't read the key.
-The role's ARN is an Actions secret, the gate masks the AWS account ID and role name before
-contacting AWS and every line of the key once read, and it doesn't print AWS's error messages from
-reading the key, so none of these appear in the public logs of gated repositories. The app has no
-permissions beyond **Members: read**.
+Gated repositories can have public logs. The gate masks the role's ARN, the AWS account ID, the
+role name and the role's unique ID before contacting AWS, masks every line of the key once read,
+and doesn't print AWS's error messages from reading the key. The ARN and ID are org secrets so
+that they're masked; any workflow in an OffchainLabs repository can still read them, which is
+harmless because the role only trusts this workflow. The app has no permissions beyond
+**Members: read**.
 
 ## Setup
 
@@ -77,13 +79,18 @@ The security team manages the AWS role and the `cla-gate-app-key` secret. The ro
 that secret as plain text, not as key/value pairs, then delete the local `.pem`.
 The gate rejects any value that isn't a PEM private key.
 
-Store the role's ARN and the app's client ID for the gate. `gh secret set` prompts for the ARN,
-which keeps it out of shell history:
+Store the role's ARN, the role's unique ID (`RoleId` from `aws iam get-role`, which the AWS action
+logs), and the app's client ID for the gate. `gh secret set` prompts for each value, which keeps
+them out of shell history:
 
 ```sh
 gh secret set CLA_GATE_AWS_ROLE_ARN --org OffchainLabs --visibility all
+gh secret set CLA_GATE_AWS_ROLE_ID --org OffchainLabs --visibility all
 gh variable set CLA_GATE_CLIENT_ID --org OffchainLabs --visibility all --body CLIENT_ID
 ```
+
+If the app's key was ever stored anywhere else, such as an Actions secret, delete that copy and
+delete the old key in the app's settings, so it's revoked rather than just unused.
 
 ### 5. Block secrets for fork pull requests
 
@@ -155,3 +162,13 @@ organizations other than OffchainLabs.
   until CLA assistant passes it.
 - A member can pass someone else's code by committing it under their own name. CLA assistant has
   the same limitation.
+- Git author emails are unverified. Anyone who can push to a gated repository can add commits
+  authored as a member, or as `dependabot[bot]`, to a member's or Dependabot's pull request, and
+  the gate counts them as that author. The same people can also post `license/cla` themselves,
+  because the ruleset doesn't require the status to come from a particular app.
+- Re-running an old workflow run reuses the version of the gate it originally ran, and the AWS
+  role still trusts it. If a version that exposes the key ever reaches `main`, reverting isn't
+  enough: rotate the key.
+- The gate job runs on the gated repository's runners. An admin of a gated repository who
+  registers a self-hosted runner could receive the job, and with it the key, so gated
+  repositories' admins are trusted with the key.

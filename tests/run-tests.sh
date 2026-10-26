@@ -119,11 +119,11 @@ run_key_step "empty secret writes nothing" 1 FAKE_KEY=
 run_key_step "binary secret (None) writes nothing" 1 FAKE_KEY=None
 run_key_step "non-PEM secret writes nothing" 1 FAKE_KEY=not-a-private-key
 
-# Usage: run_mask_step NAME ROLE_ARN WANT. WANT is the expected output, one mask per line.
+# Usage: run_mask_step NAME RC ROLE_ARN ROLE_ID WANT. WANT is the expected output, one line each.
 run_mask_step() {
-  local name=$1 arn=$2 want=$3 output rc=0
-  output=$(env ROLE_ARN="$arn" bash "$work/mask.sh" 2>&1) || rc=$?
-  if [[ "$rc" == 0 && "$output" == "$want" ]]; then
+  local name=$1 want_rc=$2 arn=$3 id=$4 want=$5 output rc=0
+  output=$(env ROLE_ARN="$arn" ROLE_ID="$id" bash "$work/mask.sh" 2>&1) || rc=$?
+  if [[ "$rc" == "$want_rc" && "$output" == "$want" ]]; then
     echo "ok   mask step: $name"
     return
   fi
@@ -131,12 +131,46 @@ run_mask_step() {
   failures=$((failures + 1))
 }
 
-run_mask_step "masks the account ID and role name" "arn:aws:iam::123456789012:role/gate-role" \
-  $'::add-mask::123456789012\n::add-mask::gate-role'
-run_mask_step "masks a role name under a path" "arn:aws:iam::123456789012:role/ci/gate-role" \
-  $'::add-mask::123456789012\n::add-mask::gate-role'
-run_mask_step "no role ARN prints nothing" "" ""
-run_mask_step "malformed role ARN prints nothing" "not-an-arn" ""
+arn="arn:aws:iam::123456789012:role/gate-role"
+masks=$'::add-mask::123456789012\n::add-mask::gate-role'
+not_arn="::error::CLA_GATE_AWS_ROLE_ARN isn't an IAM role ARN; not contacting AWS."
+run_mask_step "masks the account ID and role name" 0 "$arn" "" "$masks"
+run_mask_step "masks the role ID first" 0 "$arn" AROAEXAMPLE $'::add-mask::AROAEXAMPLE\n'"$masks"
+run_mask_step "masks a role name under a path" 0 "arn:aws:iam::123456789012:role/ci/gate-role" "" \
+  "$masks"
+run_mask_step "no role ARN prints nothing" 0 "" "" ""
+run_mask_step "malformed role ARN fails" 1 "not-an-arn" "" "$not_arn"
+run_mask_step "role ARN with a trailing space fails" 1 "$arn " "" "$not_arn"
+
+# The steps' scripts are tested above; these check how the workflow wires them together.
+workflow="$repo/.github/workflows/cla-gate.yml"
+check_wiring() {
+  local name=$1 query=$2 want=$3 got
+  got=$(yq "$query" "$workflow")
+  if [[ "$got" == "$want" ]]; then
+    echo "ok   wiring: $name"
+  else
+    echo "FAIL wiring: $name: got '$got', want '$want'"
+    failures=$((failures + 1))
+  fi
+}
+step() { echo ".jobs.cla-gate.steps[] | select(.name == \"$1\")"; }
+
+check_wiring "every step continues on error" \
+  '[.jobs.cla-gate.steps[] | select(.["continue-on-error"] != true)] | length' 0
+check_wiring "job permissions" \
+  '.jobs.cla-gate.permissions | to_entries | map(.key + "=" + .value) | join(",")' \
+  "id-token=write,pull-requests=read,statuses=write"
+check_wiring "AWS step needs the masks" "$(step "Assume the CLA gate AWS role") | .if" \
+  "steps.mask.outcome == 'success'"
+check_wiring "key step needs the AWS role" "$(step "Read the app key") | .if" \
+  "steps.aws.outcome == 'success'"
+check_wiring "token step needs the key" "$(step "Create org membership token") | .if" \
+  "steps.key.outcome == 'success'"
+# shellcheck disable=SC2016 # The workflow expression is meant literally.
+check_wiring "token step uses the key step's output" \
+  "$(step "Create org membership token") | .with[\"private-key\"]" \
+  '${{ steps.key.outputs.private-key }}'
 
 if ((failures > 0)); then
   echo "$failures failed."

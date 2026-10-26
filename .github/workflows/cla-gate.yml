@@ -32,18 +32,29 @@ jobs:
       # The app key lives in AWS Secrets Manager. The role trusts only this workflow on this
       # repository's main branch, so other workflows in gated repositories can't read it.
       # Gated repositories can have public logs. The role ARN is a secret, so it's masked as a
-      # whole, but AWS errors can name the account or role inside other ARNs, and the AWS action
-      # only masks the account ID once it has assumed the role.
+      # whole, but AWS errors can name the account or role inside other ARNs, the AWS action only
+      # masks the account ID once it has assumed the role, and it logs the role's unique ID, from
+      # which anyone with an AWS account can recover the ARN.
       - name: Mask AWS identifiers
         id: mask
         continue-on-error: true
         env:
           ROLE_ARN: ${{ secrets.CLA_GATE_AWS_ROLE_ARN }}
+          ROLE_ID: ${{ secrets.CLA_GATE_AWS_ROLE_ID }}
         run: |
-          if [[ "$ROLE_ARN" =~ ^arn:aws:iam::([0-9]{12}):role/(.+)$ ]]; then
-            echo "::add-mask::${BASH_REMATCH[1]}"
-            echo "::add-mask::${BASH_REMATCH[2]##*/}"
+          if [[ -n "$ROLE_ID" ]]; then
+            echo "::add-mask::$ROLE_ID"
           fi
+          if [[ -z "$ROLE_ARN" ]]; then
+            exit 0
+          fi
+          # IAM role names and paths only use these characters.
+          if [[ ! "$ROLE_ARN" =~ ^arn:aws:iam::([0-9]{12}):role/([A-Za-z0-9_+=,.@/-]+)$ ]]; then
+            echo "::error::CLA_GATE_AWS_ROLE_ARN isn't an IAM role ARN; not contacting AWS."
+            exit 1
+          fi
+          echo "::add-mask::${BASH_REMATCH[1]}"
+          echo "::add-mask::${BASH_REMATCH[2]##*/}"
 
       - name: Assume the CLA gate AWS role
         id: aws
@@ -55,6 +66,8 @@ jobs:
           aws-region: us-east-2
           role-duration-seconds: 900
           mask-aws-account-id: true
+          # A denial won't succeed on retry, and each retry logs the error.
+          disable-retry: true
 
       - name: Read the app key
         id: key
