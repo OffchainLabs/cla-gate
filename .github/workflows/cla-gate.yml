@@ -21,19 +21,61 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
+      id-token: write
       pull-requests: read
       statuses: write
     steps:
       # A broken gate must not decide a pull request, so failures are reported on the run without
       # failing the job, and CLA assistant decides. Dependabot runs get no Actions secrets, so
-      # this step fails for them; the next step passes bots without a token.
+      # the key steps fail for them; the last step passes bots without a token.
+      #
+      # The app key lives in AWS Secrets Manager. The role trusts only this workflow at its pinned
+      # commit, so other workflows in gated repositories can't read it. The role ARN is a secret
+      # so it's masked in the public logs of gated repositories.
+      - name: Assume the CLA gate AWS role
+        id: aws
+        continue-on-error: true
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.CLA_GATE_AWS_ROLE_ARN }}
+          aws-region: us-east-2
+          role-duration-seconds: 900
+          mask-aws-account-id: true
+
+      - name: Read the app key
+        id: key
+        if: steps.aws.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # AWS errors name the role and secret, so they're kept out of the public logs.
+          if ! key=$(aws secretsmanager get-secret-value --secret-id cla-gate-app-key \
+            --query SecretString --output text 2>/dev/null); then
+            echo "::error::Couldn't read the app key from AWS Secrets Manager. The security team" \
+              "can find the cause in the account's CloudTrail logs."
+            exit 1
+          fi
+          # Mask every line, since the masker matches single lines of a multi-line value.
+          while IFS= read -r line; do
+            if [[ -n "$line" ]]; then
+              echo "::add-mask::$line"
+            fi
+          done <<< "$key"
+          delimiter="EOF_$(openssl rand -hex 16)"
+          {
+            echo "private-key<<$delimiter"
+            echo "$key"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create org membership token
         id: app-token
+        if: steps.key.outcome == 'success'
         continue-on-error: true
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
         with:
           client-id: ${{ vars.CLA_GATE_CLIENT_ID }}
-          private-key: ${{ secrets.CLA_GATE_PRIVATE_KEY }}
+          private-key: ${{ steps.key.outputs.private-key }}
           owner: OffchainLabs
           permission-members: read
 
@@ -85,8 +127,9 @@ jobs:
           humans=$(grep -vxE 'dependabot\[bot\]|github-actions\[bot\]' <<< "$authors" || true)
           if [[ -n "$humans" ]]; then
             if [[ -z "$MEMBERS_TOKEN" ]]; then
-              echo "::error::No membership token; see the token step's error above. If the" \
-                "secret or variable is missing, follow the setup steps in OffchainLabs/cla-gate."
+              echo "::error::No membership token; see the errors from the earlier steps. If the" \
+                "role, key, or client ID is missing, follow the setup steps in" \
+                "OffchainLabs/cla-gate."
               exit 1
             fi
             while read -r login; do

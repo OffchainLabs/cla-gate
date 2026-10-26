@@ -7,12 +7,18 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -r "$work"' EXIT
 
-yq '.jobs.cla-gate.steps[] | select(has("run")) | .run' \
-  "$repo/.github/workflows/cla-gate.yml" >"$work/gate.sh"
-if [[ ! -s "$work/gate.sh" || "$(cat "$work/gate.sh")" == null ]]; then
-  echo "Couldn't find the gate's script in cla-gate.yml." >&2
-  exit 1
-fi
+# Usage: step_script NAME FILE. Writes the run script of the gate step named NAME to FILE.
+step_script() {
+  local query=".jobs.cla-gate.steps[] | select(.name == \"$1\") | .run"
+  yq "$query" "$repo/.github/workflows/cla-gate.yml" >"$2"
+  if [[ ! -s "$2" || "$(cat "$2")" == null ]]; then
+    echo "Couldn't find the \"$1\" step's script in cla-gate.yml." >&2
+    exit 1
+  fi
+}
+
+step_script "Pass license/cla if every author is an org member" "$work/gate.sh"
+step_script "Read the app key" "$work/key.sh"
 
 export PATH="$repo/tests/bin:$PATH"
 export GH_LOG="$work/gh.log" CURL_LOG="$work/curl.log"
@@ -68,6 +74,46 @@ run_gate "rejected token" 1 "" "alice" "returned HTTP 401" MEMBERS_TOKEN=revoked
 run_gate "members API error" 1 "" "alice" "returned HTTP 500" MEMBERS_HTTP=500
 run_gate "members API unreachable" 1 "" "alice" "returned HTTP 000" MEMBERS_HTTP=000
 run_gate "commit listing error" 1 "" "" "HTTP 502" FAIL_COMMITS=1
+
+fake_key=$'-----BEGIN RSA PRIVATE KEY-----\nMIIEfirstline\nMIIEsecondline\n'
+fake_key+='-----END RSA PRIVATE KEY-----'
+
+# Usage: run_key_step NAME RC [VAR=value ...]. Checks that the step prints nothing but masks,
+# masks every line of the key, and passes the key on intact only when it succeeds.
+run_key_step() {
+  local name=$1 want_rc=$2
+  shift 2
+  local out="$work/github_output" output rc=0 ok=yes detail=""
+  : >"$out"
+  output=$(env GITHUB_OUTPUT="$out" FAKE_KEY="$fake_key" "$@" bash "$work/key.sh" 2>&1) || rc=$?
+  if [[ "$rc" != "$want_rc" ]]; then
+    ok=no detail="rc=$rc"
+  elif [[ -n "$(grep -v -e '^::add-mask::' -e "^::error::Couldn't read the app key" <<<"$output" ||
+    true)" ]]; then
+    ok=no detail="printed something other than masks or its own error: $output"
+  fi
+  if [[ "$want_rc" == 0 && "$ok" == yes ]]; then
+    while IFS= read -r line; do
+      if ! grep -qxF "::add-mask::$line" <<<"$output"; then
+        ok=no detail="unmasked line: $line"
+      fi
+    done <<<"$fake_key"
+    if [[ "$(sed '1d;$d' "$out")" != "$fake_key" ]]; then
+      ok=no detail="key not passed on intact"
+    fi
+  elif [[ "$want_rc" != 0 && -s "$out" ]]; then
+    ok=no detail="wrote output after failing"
+  fi
+  if [[ "$ok" == yes ]]; then
+    echo "ok   key step: $name"
+  else
+    echo "FAIL key step: $name: $detail"
+    failures=$((failures + 1))
+  fi
+}
+
+run_key_step "masks every line and passes the key on" 0
+run_key_step "AWS error writes nothing" 1 FAIL_AWS=1
 
 if ((failures > 0)); then
   echo "$failures failed."

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Stands in for the AWS CLI in the gate's key step. Prints $FAKE_KEY for the expected
+# get-secret-value call, fails if $FAIL_AWS is set, and fails on any other call.
+set -euo pipefail
+
+expected="secretsmanager get-secret-value --secret-id cla-gate-app-key"
+expected+=" --query SecretString --output text"
+if [[ "$*" != "$expected" ]]; then
+  echo "aws stub: unexpected call: aws $*" >&2
+  exit 1
+fi
+if [[ -n "${FAIL_AWS:-}" ]]; then
+  echo "An error occurred (AccessDeniedException) when calling the GetSecretValue operation" >&2
+  exit 254
+fi
+printf '%s\n' "$FAKE_KEY"
