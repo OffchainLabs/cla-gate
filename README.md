@@ -108,3 +108,11 @@ Verified with an OffchainLabs organization ruleset on `OffchainLabs/cla-gate-tes
 
 Not yet tested: an enterprise ruleset running this workflow in organizations other than
 OffchainLabs.
+
+## Known limitations
+
+- GitHub disables scheduled workflows in public repositories after 60 days without repository
+  activity. Writing `CLA_MEMBERS` doesn't count, so once this repository goes quiet the sync stops
+  and `CLA_MEMBERS` stops changing. Re-enable **Sync members** from the Actions tab if that happens.
+- `CLA_MEMBERS` can be up to an hour old. New members' pull requests wait on CLA assistant until
+  the next sync.
