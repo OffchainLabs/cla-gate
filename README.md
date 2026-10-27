@@ -55,6 +55,10 @@ as the repositories it runs in. The ruleset runs the workflow from `main`, so ev
 `main` deploys to all gated repositories at once and can read the app key. Keep `main` behind
 reviewed pull requests and the required checks.
 
+The AWS role trusts the workflow by this repository's name. Before renaming, transferring or
+deleting the repository, have the security team change or remove the role; otherwise a new
+repository created as `OffchainLabs/cla-gate` could read the key.
+
 ### 2. Create the GitHub App
 
 In OffchainLabs organization settings → Developer settings → GitHub Apps → New GitHub App:
@@ -169,9 +173,10 @@ organizations other than OffchainLabs.
   re-runs for 30 days. So if a version that exposes the key ever reaches `main`, neither reverting
   nor rotating the key is enough on its own: a re-run of that version would read the new key.
   Instead, in this order:
-  1. Put the fixed gate on a new branch. Have the security team change the role's trusted
-     `job_workflow_ref` to that branch, then point the ruleset at it. Old runs still name
-     `refs/heads/main`, so the role rejects them.
+  1. Put the fixed gate on a new branch and add the branch to the ruleset that protects `main`.
+     Have the security team change the role's trusted `job_workflow_ref` to that branch, then
+     point the org ruleset that runs the gate at it. Old runs still name `refs/heads/main`, so
+     the role rejects them.
   2. Revoke the role's active AWS sessions (IAM → the role → **Revoke active sessions**).
   3. Rotate the app key: store a new one in Secrets Manager and delete the old one in the app's
      settings.
