@@ -165,8 +165,18 @@ organizations other than OffchainLabs.
   the gate counts them as that author. The same people can also post `license/cla` themselves,
   because the ruleset doesn't require the status to come from a particular app.
 - Re-running an old workflow run reuses the version of the gate it originally ran, and the AWS
-  role still trusts it. If a version that exposes the key ever reaches `main`, reverting isn't
-  enough: rotate the key.
+  role trusts every version on `main`, since AWS can't condition on the commit. GitHub allows
+  re-runs for 30 days. So if a version that exposes the key ever reaches `main`, neither reverting
+  nor rotating the key is enough on its own: a re-run of that version would read the new key.
+  Instead, in this order:
+  1. Put the fixed gate on a new branch. Have the security team change the role's trusted
+     `job_workflow_ref` to that branch, then point the ruleset at it. Old runs still name
+     `refs/heads/main`, so the role rejects them.
+  2. Revoke the role's active AWS sessions (IAM → the role → **Revoke active sessions**).
+  3. Rotate the app key: store a new one in Secrets Manager and delete the old one in the app's
+     settings.
+
+  Keep the new branch for at least 30 days before moving back to `main`.
 - The gate job runs on the gated repository's runners. An admin of a gated repository who
   registers a self-hosted runner could receive the job, and with it the key, so gated
   repositories' admins are trusted with the key.
