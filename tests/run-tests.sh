@@ -87,13 +87,15 @@ key_env=(
 # Each must be masked before anything could print it.
 secret_values=(fake-oidc-token ASIAFAKEKEYID fake-secret fake-session)
 
-# Usage: run_key_step NAME RC [VAR=value ...]. Checks that the step prints only masks and its own
-# errors, never AWS's (which name the role), and on success masks the token, the credentials and
-# every line of the key, and passes the key on intact.
+# Usage: [expect_key=KEY] run_key_step NAME RC [VAR=value ...]. KEY is the key the step should
+# pass on, $fake_key by default. Checks that the step prints only masks and its own errors, never
+# AWS's (which name the role), and on success masks the token, the credentials and every line of
+# the key, and passes the key on intact.
 run_key_step() {
   local name=$1 want_rc=$2
   shift 2
   local out="$work/github_output" output rc=0 ok=yes detail="" value line
+  local want_key=${expect_key:-$fake_key}
   : >"$out"
   output=$(env GITHUB_OUTPUT="$out" "${key_env[@]}" "$@" bash "$work/key.sh" 2>&1) || rc=$?
   if [[ "$rc" != "$want_rc" ]]; then
@@ -113,8 +115,8 @@ run_key_step() {
       if ! grep -qxF "::add-mask::$line" <<<"$output"; then
         ok=no detail="unmasked key line: $line"
       fi
-    done <<<"$fake_key"
-    if [[ "$(sed '1d;$d' "$out")" != "$fake_key" ]]; then
+    done <<<"$want_key"
+    if [[ "$(sed '1d;$d' "$out")" != "$want_key" ]]; then
       ok=no detail="key not passed on intact"
     fi
   elif [[ "$want_rc" != 0 && -s "$out" ]]; then
@@ -132,6 +134,10 @@ run_key_step "masks everything and passes the key on" 0
 run_key_step "no role ARN fails before contacting AWS" 1 ROLE_ARN=
 run_key_step "no OIDC token request URL fails" 1 ACTIONS_ID_TOKEN_REQUEST_URL=
 run_key_step "OIDC token error fails" 1 FAIL_OIDC=1
+pkcs8_key=$'-----BEGIN PRIVATE KEY-----\nMIIEpkcs8line\n-----END PRIVATE KEY-----'
+expect_key=$pkcs8_key run_key_step "accepts a PKCS#8 key" 0 FAKE_KEY="$pkcs8_key"
+expect_key=$fake_key run_key_step "strips Windows line endings" 0 \
+  FAKE_KEY="${fake_key//$'\n'/$'\r\n'}"
 run_key_step "role assumption error prints only its own message" 1 FAIL_STS=1
 run_key_step "secret read error prints only its own message" 1 FAIL_AWS=1
 run_key_step "empty secret writes nothing" 1 FAKE_KEY=
