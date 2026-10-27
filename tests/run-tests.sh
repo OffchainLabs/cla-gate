@@ -104,6 +104,8 @@ run_key_step() {
     ok=no detail="printed something other than masks or its own errors: $output"
   elif [[ "$output" == *"arn:aws"* ]]; then
     ok=no detail="printed the role ARN: $output"
+  elif grep -qxE '::add-mask::(null|None)' <<<"$output"; then
+    ok=no detail="masked a placeholder word: $output"
   fi
   if [[ "$want_rc" == 0 && "$ok" == yes ]]; then
     for value in "${secret_values[@]}"; do
@@ -133,6 +135,10 @@ run_key_step() {
 run_key_step "masks everything and passes the key on" 0
 run_key_step "no role ARN fails before contacting AWS" 1 ROLE_ARN=
 run_key_step "no OIDC token request URL fails" 1 ACTIONS_ID_TOKEN_REQUEST_URL=
+run_key_step "no OIDC token request token fails" 1 ACTIONS_ID_TOKEN_REQUEST_TOKEN=
+run_key_step "role ARN with a trailing newline is trimmed" 0 \
+  ROLE_ARN=$'arn:aws:iam::123456789012:role/gate-role\n'
+run_key_step "role assumption without credentials fails" 1 STS_NO_CREDS=1
 run_key_step "OIDC token error fails" 1 FAIL_OIDC=1
 pkcs8_key=$'-----BEGIN PRIVATE KEY-----\nMIIEpkcs8line\n-----END PRIVATE KEY-----'
 expect_key=$pkcs8_key run_key_step "accepts a PKCS#8 key" 0 FAKE_KEY="$pkcs8_key"

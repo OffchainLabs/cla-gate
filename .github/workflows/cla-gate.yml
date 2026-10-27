@@ -48,15 +48,19 @@ jobs:
             exit 1
           }
 
+          # ARNs have no whitespace; a secret set from `echo` would end in a newline.
+          ROLE_ARN=${ROLE_ARN//[[:space:]]/}
           if [[ -z "$ROLE_ARN" ]]; then
             fail "CLA_GATE_AWS_ROLE_ARN isn't set; see the setup steps in OffchainLabs/cla-gate."
           fi
-          if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+          request_url=${ACTIONS_ID_TOKEN_REQUEST_URL:-}
+          request_token=${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}
+          if [[ -z "$request_url" || -z "$request_token" ]]; then
             fail "This run can't get a GitHub OIDC token; the job needs id-token: write."
           fi
 
-          if ! oidc_token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" 2>/dev/null |
+          if ! oidc_token=$(curl -sSf -H "Authorization: bearer $request_token" \
+            "$request_url&audience=sts.amazonaws.com" 2>/dev/null |
             jq -r '.value // empty'); then
             fail "Couldn't get a GitHub OIDC token."
           fi
@@ -72,9 +76,13 @@ jobs:
             fail "Couldn't assume the AWS role. The security team can find the cause in the" \
               "account's CloudTrail logs."
           fi
-          AWS_ACCESS_KEY_ID=$(jq -r .AccessKeyId <<< "$creds")
-          AWS_SECRET_ACCESS_KEY=$(jq -r .SecretAccessKey <<< "$creds")
-          AWS_SESSION_TOKEN=$(jq -r .SessionToken <<< "$creds")
+          # -e fails on a missing field rather than yielding "null", which would be masked
+          # everywhere in the log and passed on as a credential.
+          if ! AWS_ACCESS_KEY_ID=$(jq -er .AccessKeyId <<< "$creds") ||
+            ! AWS_SECRET_ACCESS_KEY=$(jq -er .SecretAccessKey <<< "$creds") ||
+            ! AWS_SESSION_TOKEN=$(jq -er .SessionToken <<< "$creds"); then
+            fail "Assuming the AWS role didn't return credentials."
+          fi
           echo "::add-mask::$AWS_ACCESS_KEY_ID"
           echo "::add-mask::$AWS_SECRET_ACCESS_KEY"
           echo "::add-mask::$AWS_SESSION_TOKEN"
