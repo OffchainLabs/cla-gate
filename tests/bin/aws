@@ -2,8 +2,8 @@
 # Stands in for the AWS CLI in the gate's key step. Assumes the role only with the expected ARN
 # and OIDC token (fails if $FAIL_STS is set, returns no credentials if $STS_NO_CREDS is set),
 # returns $FAKE_KEY only to a caller holding the credentials it handed out (fails if $FAIL_AWS is
-# set), and fails on any other call. Its errors name the role, like AWS's do, so tests can check
-# they never reach the log.
+# set), and fails on any other call. Records the service of each call in $AWS_LOG. Its errors
+# name the role, like AWS's do, so tests can check they never reach the log.
 set -euo pipefail
 
 sts="sts assume-role-with-web-identity --no-sign-request --role-arn $FAKE_ROLE_ARN"
@@ -14,6 +14,7 @@ get+=" --query SecretString --output text"
 creds='{"AccessKeyId":"ASIAFAKEKEYID","SecretAccessKey":"fake-secret",'
 creds+='"SessionToken":"fake-session"}'
 held="${AWS_ACCESS_KEY_ID:-}/${AWS_SECRET_ACCESS_KEY:-}/${AWS_SESSION_TOKEN:-}"
+echo "$1" >>"$AWS_LOG"
 
 case "$*" in
 "$sts")

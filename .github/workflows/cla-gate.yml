@@ -59,12 +59,11 @@ jobs:
             fail "This run can't get a GitHub OIDC token; the job needs id-token: write."
           fi
 
+          # -e fails on a missing value rather than yielding "null", which would be masked
+          # everywhere in the log and sent to AWS as the token.
           if ! oidc_token=$(curl -sSf -H "Authorization: bearer $request_token" \
             "$request_url&audience=sts.amazonaws.com" 2>/dev/null |
-            jq -r '.value // empty'); then
-            fail "Couldn't get a GitHub OIDC token."
-          fi
-          if [[ -z "$oidc_token" ]]; then
+            jq -er .value); then
             fail "Couldn't get a GitHub OIDC token."
           fi
           echo "::add-mask::$oidc_token"
@@ -76,8 +75,7 @@ jobs:
             fail "Couldn't assume the AWS role. The security team can find the cause in the" \
               "account's CloudTrail logs."
           fi
-          # -e fails on a missing field rather than yielding "null", which would be masked
-          # everywhere in the log and passed on as a credential.
+          # As above, -e fails on a missing field rather than passing on "null".
           if ! AWS_ACCESS_KEY_ID=$(jq -er .AccessKeyId <<< "$creds") ||
             ! AWS_SECRET_ACCESS_KEY=$(jq -er .SecretAccessKey <<< "$creds") ||
             ! AWS_SESSION_TOKEN=$(jq -er .SessionToken <<< "$creds"); then
@@ -99,7 +97,7 @@ jobs:
           # line must be a PEM private key header: PKCS#1 ("-----BEGIN RSA PRIVATE KEY-----") or
           # PKCS#8 ("-----BEGIN PRIVATE KEY-----").
           header=${key%%$'\n'*}
-          if [[ ! "$header" =~ ^-----BEGIN\ ([A-Z]+\ )?PRIVATE\ KEY-----$ ]]; then
+          if [[ ! "$header" =~ ^-----BEGIN\ (RSA\ )?PRIVATE\ KEY-----$ ]]; then
             fail "The app key in AWS Secrets Manager isn't a PEM private key. Store the GitHub" \
               "App's private key there as plain text."
           fi
