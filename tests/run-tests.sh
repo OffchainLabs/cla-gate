@@ -143,6 +143,9 @@ run_key_step "secret read error prints only its own message" 1 FAIL_AWS=1
 run_key_step "empty secret writes nothing" 1 FAKE_KEY=
 run_key_step "binary secret (None) writes nothing" 1 FAKE_KEY=None
 run_key_step "non-PEM secret writes nothing" 1 FAKE_KEY=not-a-private-key
+run_key_step "PEM block after other text writes nothing" 1 \
+  FAKE_KEY=$'not a header\n'"$fake_key"
+run_key_step "text before the header writes nothing" 1 FAKE_KEY="junk$fake_key"
 
 # The steps' scripts are tested above; these check how the workflow wires them together.
 workflow="$repo/.github/workflows/cla-gate.yml"
