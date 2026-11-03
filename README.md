@@ -135,8 +135,14 @@ The tests also check the merge group's status SHA, context, description, and wor
 
 ## Tested behaviour
 
-Verified with the OffchainLabs organization ruleset on `OffchainLabs/cla-gate-test`, with the
-version before the key moved to AWS:
+Verified with the OffchainLabs organization ruleset on `OffchainLabs/cla-gate-test`, running the
+gate from `refs/heads/main`:
+
+- A member's branch pull request gets `license/cla: success`. The gate assumes the AWS role, reads
+  the key from Secrets Manager, and creates its token. The log shows the role ARN and every line
+  of the key only as `***`, and no account ID.
+
+With the version before the key moved to AWS:
 
 - A branch pull request by a member with concealed membership gets `license/cla: success`.
 - A Dependabot pull request gets `license/cla: success`. The token step fails because the run has
@@ -155,8 +161,8 @@ With earlier versions of the gate:
 On `arbitrum-docs` before gating, CLA assistant only ever posted `license/cla: success` on member
 pull requests, from minutes to over a day after they opened, and sometimes never.
 
-Not yet tested live: merge queue groups, reading the key from AWS, and an enterprise ruleset
-running this workflow in organizations other than OffchainLabs.
+Not yet tested: merge queue groups, including whether an Evaluate-mode ruleset runs the workflow
+on them, and an enterprise ruleset running this workflow in organizations other than OffchainLabs.
 
 ## Known limitations
 
