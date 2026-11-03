@@ -141,6 +141,8 @@ gate from `refs/heads/main`:
 - A member's branch pull request gets `license/cla: success`. The gate assumes the AWS role, reads
   the key from Secrets Manager, and creates its token. The log shows the role ARN and every line
   of the key only as `***`, and no account ID.
+- With the gate's ruleset in Evaluate mode and `license/cla` required by a separate Active
+  ruleset, the gate still runs and posts `license/cla: success`, and the pull request can merge.
 
 With the version before the key moved to AWS:
 
