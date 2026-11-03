@@ -34,11 +34,12 @@ Merge groups run a separate job with only **Statuses: write** permission. It pos
 reading the app key or checking membership, because CLA checks happen on the pull requests before
 they enter the queue. A failure to post this status fails the merge group job.
 
-A status belongs to a commit, so a success counts in every pull request with that head commit.
-That is safe as long as every branch that takes pull requests is targeted: the gate's pull request
-checks only run for targeted branches, so each commit added to one of them since it was targeted
-passed the gate or CLA assistant. Opening the same commit against another targeted branch adds
-only such commits, apart from history that was already in a branch when it was first targeted.
+A status belongs to a commit, so a success counts in every pull request with that head commit,
+including pull requests into other branches. That is safe as long as the gate only runs on pull
+requests into branches that require `license/cla`: every commit on those branches then passed the
+gate or CLA assistant, so the same head opened against another such branch brings in only checked
+commits, apart from history from before a branch required `license/cla`. The two rulesets in step
+6 target the same branches to keep this true.
 
 The app key is stored in the security team's AWS account. The gate assumes an AWS role with
 GitHub's OIDC token. The role trusts only this workflow on this repository's `main` branch, so
@@ -106,19 +107,22 @@ Enterprise settings → Policies → Actions: for fork pull request workflows in
 turn off **Send write tokens to workflows from pull requests** and **Send secrets and variables to
 workflows from pull requests**.
 
-### 6. Create the ruleset
+### 6. Create the rulesets
 
-Organization settings → Rulesets → New branch ruleset:
+Create two branch rulesets in Organization settings → Rulesets. Give both the same targets:
+repositories where property `cla-gate` is `true`, and the default branch plus other long-lived
+branches that take pull requests, such as `main` and `develop`. Target only branches that change
+through pull requests, because requiring a status check blocks direct pushes.
 
-- Target: repositories where property `cla-gate` is `true`; the default branch and every other
-  long-lived branch that takes pull requests, such as `develop`. Target only branches that change
-  through pull requests, because requiring a workflow blocks direct pushes.
-- **Require status checks to pass**: `license/cla`.
-- **Require workflows to pass before merging**: `OffchainLabs/cla-gate`,
-  `.github/workflows/cla-gate.yml`, at ref `refs/heads/main`. Pin to the branch, not a commit:
-  the role trusts the workflow only by that ref, so a run pinned to a commit can't read the key.
+- **CLA required**, in **Active** mode, with **Require status checks to pass**: `license/cla`.
+- **CLA gate**, in **Evaluate** mode, with **Require workflows to pass before merging**:
+  `OffchainLabs/cla-gate`, `.github/workflows/cla-gate.yml`, at ref `refs/heads/main`. Pin to the
+  branch, not a commit: the role trusts the workflow only by that ref, so a run pinned to a commit
+  can't read the key.
 
-Start in **Evaluate** mode, open a pull request in a gated repository, then switch to **Active**.
+Evaluate mode runs the gate without making it a requirement, so a pull request with no gate run,
+or a failed one, waits only on CLA assistant. Change the two rulesets' targets together: the gate
+must not run on a branch that doesn't require `license/cla` (see How it works).
 
 ## Tests
 
@@ -160,12 +164,12 @@ running this workflow in organizations other than OffchainLabs.
   or pushed to, and ignore `types` filters. A pull request moved from an untargeted base to a
   targeted one has no gate run until it's pushed to or closed and reopened.
 - Ruleset workflows don't run on events caused by `GITHUB_TOKEN`, so a pull request opened or
-  pushed to by a workflow using it never runs the gate and waits on the required workflow. Close
-  and reopen it to run the gate, or open such pull requests with a GitHub App token.
-- When a branch such as `develop` is first targeted, commits already on it haven't been checked.
-  A commit that passed in a pull request into `develop` also passes when opened against `main`,
-  even though that pull request also brings in those older commits. Opening `develop` itself
-  against `main` checks them.
+  pushed to by a workflow using it never runs the gate and waits on CLA assistant. Close and
+  reopen it to run the gate, or open such pull requests with a GitHub App token.
+- Commits on a branch from before it required `license/cla` were never checked. If one of them
+  reaches another gated branch in a pull request whose head commit already passed the gate, the
+  success carries over. Branches that already required `license/cla` through CLA assistant before
+  being gated have no such commits.
 - The newest `license/cla` status wins. If CLA assistant posts a failure or pending after the
   gate's success, for example for a member it considers unsigned, the pull request is blocked
   until CLA assistant passes it.
