@@ -8,15 +8,16 @@ workflow posts `license/cla: success` itself. Every other pull request is left f
 ## How it works
 
 The ruleset runs `cla-gate.yml` in each gated repository on pull requests into the branches it
-targets. The gate creates a token from a GitHub App that has only **Members: read**, and checks
-each login with `GET /orgs/OffchainLabs/members/{login}`, which also sees concealed memberships.
+targets. The gate reads a GitHub App's private key from AWS Secrets Manager, creates a token from
+the app, which has only **Members: read**, and checks each login with
+`GET /orgs/OffchainLabs/members/{login}`, which also sees concealed memberships.
 
 The gate decides as follows:
 
 1. Pull requests from forks are skipped and left to CLA assistant. Only people with write access
    can open pull requests from branches in the repository.
 2. `dependabot[bot]` and `github-actions[bot]` count as members without a lookup, because
-   Dependabot runs don't get Actions secrets.
+   Dependabot runs don't get Actions secrets and so can't read the key.
 3. If the pull request author or any commit author isn't a member, or a commit's email isn't
    linked to a GitHub account, it stops. Git author emails are unverified, so commit authors are
    checked as well as the authenticated pull request author.
@@ -33,10 +34,15 @@ pull requests into targeted branches, so each commit added to one of them since 
 passed the gate or CLA assistant. Opening the same commit against another targeted branch adds
 only such commits, apart from history that was already in a branch when it was first targeted.
 
-The app key is an organization secret that the gated repositories can read. Anyone who can run a
-workflow in one of them from a branch, which takes write access, can copy the key and use it to
-read OffchainLabs membership data, such as members (including concealed memberships) and teams.
-The app has no other permissions. Rotate the key if it may have been copied.
+The app key is stored in the security team's AWS account. The gate assumes an AWS role with
+GitHub's OIDC token. The role trusts only this workflow on this repository's `main` branch, so
+other workflows in gated repositories can't read the key.
+Gated repositories can have public logs, and AWS's output names the account, the role and the
+secret, so the gate calls AWS with the AWS CLI and prints none of its output; on failure it
+prints only its own message. It masks the OIDC token, the AWS credentials and every line of the
+key. The role's ARN is an org secret, so it's masked too; any workflow in an OffchainLabs
+repository can still read it, which is harmless because the role only trusts this workflow. The
+app has no permissions beyond **Members: read**.
 
 ## Setup
 
@@ -45,8 +51,13 @@ Requires an OffchainLabs organization owner.
 ### 1. Publish this repository
 
 `OffchainLabs/cla-gate` must be **public**, because a ruleset workflow must be at least as visible
-as the repositories it runs in. Changes reach gated repositories only when the ruleset's pinned
-commit is updated, so review changes before updating the pin.
+as the repositories it runs in. The ruleset runs the workflow from `main`, so every merge to
+`main` deploys to all gated repositories at once and can read the app key. Keep `main` behind
+reviewed pull requests and the required checks.
+
+The AWS role trusts the workflow by this repository's name. Before renaming, transferring or
+deleting the repository, have the security team change or remove the role; otherwise a new
+repository created as `OffchainLabs/cla-gate` could read the key.
 
 ### 2. Create the GitHub App
 
@@ -67,16 +78,21 @@ already be enabled for those repositories.
 
 ### 4. Store the key
 
-Make the key readable only by the gated repositories, listed by name:
+The security team manages the AWS role and the `cla-gate-app-key` secret. The role must trust
+`OffchainLabs/cla-gate/.github/workflows/cla-gate.yml@refs/heads/main`. Put the private key in
+that secret as plain text, not as key/value pairs, then delete the local `.pem`.
+The gate rejects any value that isn't a PEM private key.
+
+Store the role's ARN and the app's client ID for the gate. `gh secret set` prompts for the ARN,
+which keeps it out of shell history:
 
 ```sh
-gh secret set CLA_GATE_PRIVATE_KEY --org OffchainLabs --visibility selected \
-  --repos REPO1,REPO2 < cla-gate.private-key.pem
+gh secret set CLA_GATE_AWS_ROLE_ARN --org OffchainLabs --visibility all
 gh variable set CLA_GATE_CLIENT_ID --org OffchainLabs --visibility all --body CLIENT_ID
 ```
 
-Then delete the local `.pem`. When you gate another repository, add it to the secret's repositories
-too; until then its runs report a missing token and leave pull requests to CLA assistant.
+If the app's key was ever stored anywhere else, such as an Actions secret, delete that copy and
+delete the old key in the app's settings, so it's revoked rather than just unused.
 
 ### 5. Block secrets for fork pull requests
 
@@ -93,24 +109,25 @@ Organization settings → Rulesets → New branch ruleset:
   through pull requests, because requiring a workflow blocks direct pushes.
 - **Require status checks to pass**: `license/cla`.
 - **Require workflows to pass before merging**: `OffchainLabs/cla-gate`,
-  `.github/workflows/cla-gate.yml`, pinned to a commit SHA. Update the pin to deploy changes.
+  `.github/workflows/cla-gate.yml`, at ref `refs/heads/main`. Pin to the branch, not a commit:
+  the role trusts the workflow only by that ref, so a run pinned to a commit can't read the key.
 
 Start in **Evaluate** mode, open a pull request in a gated repository, then switch to **Active**.
 
 ## Tests
 
-`tests/run-tests.sh` pulls the gate's script out of `cla-gate.yml` and runs it against stub `gh`
-and `curl` commands, checking each case's exit code, the statuses it posts, the logins it looks
-up, and its output. CI runs it on every pull request. Running it locally needs `yq` and bash 4 or
+`tests/run-tests.sh` pulls the gate's scripts out of `cla-gate.yml` and runs them against stub
+`gh`, `curl` and `aws` commands. It checks each case's exit code, the statuses posted, the logins
+looked up, and the output, and that the key step prints nothing but masks for every line of the
+key. CI runs it on every pull request. Running it locally needs `yq` and bash 4 or
 later; on macOS, `brew install yq bash`.
 
 ## Tested behaviour
 
-Verified with the OffchainLabs organization ruleset on `OffchainLabs/cla-gate-test`, with this
-version:
+Verified with the OffchainLabs organization ruleset on `OffchainLabs/cla-gate-test`, with the
+version before the key moved to AWS:
 
-- A branch pull request by a member with concealed membership gets `license/cla: success`, using
-  the key secret scoped to the gated repositories.
+- A branch pull request by a member with concealed membership gets `license/cla: success`.
 - A Dependabot pull request gets `license/cla: success`. The token step fails because the run has
   no Actions secrets, and the gate passes `dependabot[bot]` without a lookup.
 
@@ -121,12 +138,14 @@ With earlier versions of the gate:
   workflow, so the pull request waits only on CLA assistant.
 - With the app not installed, the run reports the error, posts nothing, and still passes.
 - The ruleset doesn't run the workflow on pull requests into branches it doesn't target.
+- A ruleset can pin the workflow to a branch, and the run's OIDC token then has
+  `job_workflow_ref` ending in that branch ref (`@refs/heads/<branch>`), not the commit.
 
 On `arbitrum-docs` before gating, CLA assistant only ever posted `license/cla: success` on member
 pull requests, from minutes to over a day after they opened, and sometimes never.
 
-Not yet tested: an enterprise ruleset running this workflow in organizations other than
-OffchainLabs.
+Not yet tested: reading the key from AWS, and an enterprise ruleset running this workflow in
+organizations other than OffchainLabs.
 
 ## Known limitations
 
@@ -145,3 +164,24 @@ OffchainLabs.
   until CLA assistant passes it.
 - A member can pass someone else's code by committing it under their own name. CLA assistant has
   the same limitation.
+- Git author emails are unverified. Anyone who can push to a gated repository can add commits
+  authored as a member, or as `dependabot[bot]`, to a member's or Dependabot's pull request, and
+  the gate counts them as that author. The same people can also post `license/cla` themselves,
+  because the ruleset doesn't require the status to come from a particular app.
+- Re-running an old workflow run reuses the version of the gate it originally ran, and the AWS
+  role trusts every version on `main`, since AWS can't condition on the commit. GitHub allows
+  re-runs for 30 days. So if a version that exposes the key ever reaches `main`, neither reverting
+  nor rotating the key is enough on its own: a re-run of that version would read the new key.
+  Instead, in this order:
+  1. Put the fixed gate on a new branch and add the branch to the ruleset that protects `main`.
+     Have the security team change the role's trusted `job_workflow_ref` to that branch, then
+     point the org ruleset that runs the gate at it. Old runs still name `refs/heads/main`, so
+     the role rejects them.
+  2. Revoke the role's active AWS sessions (IAM → the role → **Revoke active sessions**).
+  3. Rotate the app key: store a new one in Secrets Manager and delete the old one in the app's
+     settings.
+
+  Keep the new branch for at least 30 days before moving back to `main`.
+- The gate job runs on the gated repository's runners. An admin of a gated repository who
+  registers a self-hosted runner could receive the job, and with it the key, so gated
+  repositories' admins are trusted with the key.
