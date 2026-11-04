@@ -4,6 +4,10 @@
 # recognise.
 set -euo pipefail
 
+if [[ -n "${GH_ARGS_LOG:-}" ]]; then
+  printf '%s\n' "$@" >>"$GH_ARGS_LOG"
+fi
+
 args="$*"
 case "$args" in
 *"--jq .commits"*)
@@ -21,6 +25,10 @@ case "$args" in
   printf '%s\n' ${COMMIT_AUTHORS:-alice}
   ;;
 *"statuses/"*)
+  if [[ -n "${FAIL_STATUS:-}" ]]; then
+    echo "HTTP 403: Forbidden" >&2
+    exit 1
+  fi
   for arg in "$@"; do
     if [[ "$arg" == state=* ]]; then
       echo "${arg#state=}" >>"$GH_LOG"

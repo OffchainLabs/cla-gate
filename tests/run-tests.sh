@@ -7,9 +7,9 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -r "$work"' EXIT
 
-# Usage: step_script NAME FILE. Writes the run script of the gate step named NAME to FILE.
+# Usage: step_script NAME FILE [JOB]. Writes the named step's run script to FILE.
 step_script() {
-  local query=".jobs.cla-gate.steps[] | select(.name == \"$1\") | .run"
+  local query=".jobs.${3:-cla-gate}.steps[] | select(.name == \"$1\") | .run"
   yq "$query" "$repo/.github/workflows/cla-gate.yml" >"$2"
   if [[ ! -s "$2" || "$(cat "$2")" == null ]]; then
     echo "Couldn't find the \"$1\" step's script in cla-gate.yml." >&2
@@ -19,6 +19,7 @@ step_script() {
 
 step_script "Pass license/cla if every author is an org member" "$work/gate.sh"
 step_script "Read the app key" "$work/key.sh"
+step_script "Pass license/cla for merge group" "$work/merge-group.sh" merge-group
 
 export PATH="$repo/tests/bin:$PATH"
 export GH_LOG="$work/gh.log" CURL_LOG="$work/curl.log" AWS_LOG="$work/aws.log"
@@ -74,6 +75,36 @@ run_gate "rejected token" 1 "" "alice" "returned HTTP 401" MEMBERS_TOKEN=revoked
 run_gate "members API error" 1 "" "alice" "returned HTTP 500" MEMBERS_HTTP=500
 run_gate "members API unreachable" 1 "" "alice" "returned HTTP 000" MEMBERS_HTTP=000
 run_gate "commit listing error" 1 "" "" "HTTP 502" FAIL_COMMITS=1
+
+# The merge queue posts directly to the merge group's SHA, without PR or membership API calls.
+run_merge_group() {
+  local name=$1 want_rc=$2 want_posted=$3 want_output=$4
+  shift 4
+  local output rc=0 posted args
+  : >"$GH_LOG"
+  : >"$CURL_LOG"
+  : >"$AWS_LOG"
+  : >"$work/gh-args.log"
+  output=$(env GH_TOKEN=unused REPO=o/r HEAD_SHA=merge-sha \
+    RUN_URL=https://example.invalid/run GH_ARGS_LOG="$work/gh-args.log" \
+    "$@" bash "$work/merge-group.sh" 2>&1) || rc=$?
+  posted=$(paste -sd' ' "$GH_LOG")
+  args=$(cat "$work/gh-args.log")
+  local want_args=$'api\nrepos/o/r/statuses/merge-sha\n--silent\n-f\nstate=success\n-f\ncontext=license/cla\n-f\n'
+  want_args+=$'description=Dummy status to green light merge group. CLA checks only happen on Pull Requests.\n-f\n'
+  want_args+='target_url=https://example.invalid/run'
+  if [[ "$rc" == "$want_rc" && "$posted" == "$want_posted" && "$args" == "$want_args" &&
+    "$output" == *"$want_output"* && ! -s "$CURL_LOG" && ! -s "$AWS_LOG" ]]; then
+    echo "ok   merge group: $name"
+  else
+    echo "FAIL merge group: $name: rc=$rc posted='$posted' args='$args' output='$output'"
+    failures=$((failures + 1))
+  fi
+}
+
+run_merge_group "posts license/cla success on the merge commit" 0 success \
+  "Marked license/cla as passing for merge group merge-sha."
+run_merge_group "reports a status posting failure" 1 "" "HTTP 403" FAIL_STATUS=1
 
 fake_key=$'-----BEGIN RSA PRIVATE KEY-----\nMIIEfirstline\nMIIEsecondline\n'
 fake_key+='-----END RSA PRIVATE KEY-----'
@@ -186,10 +217,30 @@ check_wiring() {
 }
 step() { echo ".jobs.cla-gate.steps[] | select(.name == \"$1\")"; }
 
-check_wiring "only pull requests trigger the gate" '.on | keys | join(",")' pull_request
+check_wiring "pull requests and merge groups trigger the gate" '.on | keys | join(",")' \
+  "pull_request,merge_group"
+check_wiring "merge groups run when checks are requested" '.on.merge_group.types | join(",")' \
+  checks_requested
 check_wiring "the workflow grants no permissions by default" '.permissions' '{}'
 check_wiring "fork pull requests are skipped" '.jobs.cla-gate.if' \
-  "github.event.pull_request.head.repo.full_name == github.repository"
+  "github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository"
+check_wiring "merge group job runs only for merge groups" '.jobs.merge-group.if' \
+  "github.event_name == 'merge_group'"
+check_wiring "merge group job needs only status permission" \
+  '.jobs.merge-group.permissions | to_entries | map(.key + "=" + .value) | join(",")' \
+  "statuses=write"
+check_wiring "merge group job only posts the status" '.jobs.merge-group.steps | length' 1
+check_wiring "merge group status failures fail the job" \
+  '[.jobs.merge-group.steps[] | select(.["continue-on-error"] == true)] | length' 0
+# shellcheck disable=SC2016 # The workflow expressions are meant literally.
+check_wiring "merge group status targets its head SHA" '.jobs.merge-group.steps[0].env.HEAD_SHA' \
+  '${{ github.event.merge_group.head_sha }}'
+# shellcheck disable=SC2016
+check_wiring "merge group status uses the workflow token" '.jobs.merge-group.steps[0].env.GH_TOKEN' \
+  '${{ github.token }}'
+# shellcheck disable=SC2016
+check_wiring "concurrency separates pull requests and merge group refs" '.concurrency.group' \
+  'cla-gate-${{ github.repository }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}'
 check_wiring "every step continues on error" \
   '[.jobs.cla-gate.steps[] | select(.["continue-on-error"] != true)] | length' 0
 check_wiring "job permissions" \
