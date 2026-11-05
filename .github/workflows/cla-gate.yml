@@ -1,24 +1,48 @@
 name: CLA gate
 
-# Run in other repositories by an organization ruleset (see README.md), which runs it only on pull
-# requests into the branches it targets. Marks `license/cla` as passing for pull requests written
-# entirely by OffchainLabs members, so internal work isn't blocked when CLA assistant stalls.
+# Run in other repositories by an organization ruleset (see README.md). Marks `license/cla` as
+# passing for merge groups and for pull requests written entirely by OffchainLabs members, so
+# internal work isn't blocked when CLA assistant stalls.
 # Every other pull request is left for CLA assistant to decide.
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
 
 permissions: {}
 
 concurrency:
-  group: cla-gate-${{ github.repository }}-${{ github.event.pull_request.number }}
+  group: cla-gate-${{ github.repository }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  merge-group:
+    name: CLA gate (merge queue)
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - name: Pass license/cla for merge group
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/statuses/$HEAD_SHA" --silent \
+            -f state=success \
+            -f context=license/cla \
+            -f description="Dummy status to green light merge group. CLA checks only happen on Pull Requests." \
+            -f target_url="$RUN_URL"
+          echo "Marked license/cla as passing for merge group $HEAD_SHA."
+
   cla-gate:
     name: CLA gate
     # Pull requests from forks fall back to CLA assistant. Only people with write access can open
     # pull requests from branches in the repository.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       id-token: write

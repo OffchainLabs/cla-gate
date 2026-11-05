@@ -4,13 +4,15 @@ CLA assistant sometimes stalls and leaves `license/cla` pending, which blocks me
 repository holds a workflow that an organization ruleset runs on pull requests in selected
 repositories. When the pull request author and every commit author are OffchainLabs members, the
 workflow posts `license/cla: success` itself. Every other pull request is left for CLA assistant.
+For merge queue groups, it posts a dummy `license/cla: success` on the merge group's head commit:
+"Dummy status to green light merge group. CLA checks only happen on Pull Requests."
 
 ## How it works
 
 The ruleset runs `cla-gate.yml` in each gated repository on pull requests into the branches it
-targets. The gate reads a GitHub App's private key from AWS Secrets Manager, creates a token from
-the app, which has only **Members: read**, and checks each login with
-`GET /orgs/OffchainLabs/members/{login}`, which also sees concealed memberships.
+targets and on merge groups. On pull requests, the gate reads a GitHub App's private key from AWS
+Secrets Manager, creates a token from the app, which has only **Members: read**, and checks each
+login with `GET /orgs/OffchainLabs/members/{login}`, which also sees concealed memberships.
 
 The gate decides as follows:
 
@@ -25,12 +27,16 @@ The gate decides as follows:
    decides instead.
 5. Otherwise it posts `license/cla: success` on the head commit, labelled "(CLA gate)".
 
-Errors are reported on the run but never fail it, and the gate never posts a failure, so a broken
-gate leaves pull requests to CLA assistant.
+On pull requests, errors are reported on the run but never fail it, and the gate never posts a
+failure, so a broken gate leaves pull requests to CLA assistant.
+
+Merge groups run a separate job with only **Statuses: write** permission. It posts success without
+reading the app key or checking membership, because CLA checks happen on the pull requests before
+they enter the queue. A failure to post this status fails the merge group job.
 
 A status belongs to a commit, so a success counts in every pull request with that head commit.
-That is safe as long as every branch that takes pull requests is targeted: the gate only runs on
-pull requests into targeted branches, so each commit added to one of them since it was targeted
+That is safe as long as every branch that takes pull requests is targeted: the gate's pull request
+checks only run for targeted branches, so each commit added to one of them since it was targeted
 passed the gate or CLA assistant. Opening the same commit against another targeted branch adds
 only such commits, apart from history that was already in a branch when it was first targeted.
 
@@ -121,6 +127,7 @@ Start in **Evaluate** mode, open a pull request in a gated repository, then swit
 looked up, and the output, and that the key step prints nothing but masks for every line of the
 key. CI runs it on every pull request. Running it locally needs `yq` and bash 4 or
 later; on macOS, `brew install yq bash`.
+The tests also check the merge group's status SHA, context, description, and workflow wiring.
 
 ## Tested behaviour
 
@@ -144,14 +151,14 @@ With earlier versions of the gate:
 On `arbitrum-docs` before gating, CLA assistant only ever posted `license/cla: success` on member
 pull requests, from minutes to over a day after they opened, and sometimes never.
 
-Not yet tested: reading the key from AWS, and an enterprise ruleset running this workflow in
-organizations other than OffchainLabs.
+Not yet tested live: merge queue groups, reading the key from AWS, and an enterprise ruleset
+running this workflow in organizations other than OffchainLabs.
 
 ## Known limitations
 
-- Ruleset workflows run only when a pull request is opened, reopened, or pushed to, and ignore
-  `types` filters. A pull request moved from an untargeted base to a targeted one has no gate run
-  until it's pushed to or closed and reopened.
+- For pull request events, ruleset workflows run only when a pull request is opened, reopened,
+  or pushed to, and ignore `types` filters. A pull request moved from an untargeted base to a
+  targeted one has no gate run until it's pushed to or closed and reopened.
 - Ruleset workflows don't run on events caused by `GITHUB_TOKEN`, so a pull request opened or
   pushed to by a workflow using it never runs the gate and waits on the required workflow. Close
   and reopen it to run the gate, or open such pull requests with a GitHub App token.
