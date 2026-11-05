@@ -145,6 +145,9 @@ gate from `refs/heads/main`:
   of the key only as `***`, and no account ID.
 - With the gate's ruleset in Evaluate mode and `license/cla` required by a separate Active
   ruleset, the gate still runs and posts `license/cla: success`, and the pull request can merge.
+- With a merge queue on the target branch, the Evaluate-mode ruleset also runs the gate on the
+  merge group, which posts `license/cla: success` on the merge group's head commit, and the queue
+  merges. Without the `merge_group` trigger, the merge group waited with no `license/cla`.
 
 With the version before the key moved to AWS:
 
@@ -165,8 +168,8 @@ With earlier versions of the gate:
 On `arbitrum-docs` before gating, CLA assistant only ever posted `license/cla: success` on member
 pull requests, from minutes to over a day after they opened, and sometimes never.
 
-Not yet tested: merge queue groups, including whether an Evaluate-mode ruleset runs the workflow
-on them, and an enterprise ruleset running this workflow in organizations other than OffchainLabs.
+Not yet tested: an enterprise ruleset running this workflow in organizations other than
+OffchainLabs.
 
 ## Known limitations
 
