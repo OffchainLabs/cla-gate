@@ -121,8 +121,10 @@ through pull requests, because requiring a status check blocks direct pushes.
   can't read the key.
 
 Evaluate mode runs the gate without making it a requirement, so a pull request with no gate run,
-or a failed one, waits only on CLA assistant. Change the two rulesets' targets together: the gate
-must not run on a branch that doesn't require `license/cla` (see How it works).
+or a failed one, waits only on CLA assistant. Merge queues are the exception: CLA assistant doesn't
+post on merge groups, so a queue on a gated branch waits until the gate posts. Change the two
+rulesets' targets together: the gate must not run on a branch that doesn't require `license/cla`
+(see How it works).
 
 ## Tests
 
